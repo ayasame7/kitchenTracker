@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "133437212673",
+    "firebase_url": "https://kitchentracker-470fe-default-rtdb.firebaseio.com",
+    "project_id": "kitchentracker-470fe",
+    "storage_bucket": "kitchentracker-470fe.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:133437212673:android:b8123a60df32fc86dd9800",
+        "android_client_info": {
+          "package_name": "com.sameh.kitchentracker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrELu4FkGiGimuo_kv98wb3KoahBY5bAY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
