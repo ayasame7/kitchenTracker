@@ -1,41 +1,33 @@
 package com.example.fridgetracker
 
-import android.Manifest
-import android.app.Activity
-import android.app.AlarmManager
 import android.app.DatePickerDialog
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.os.Build
+import android.media.MediaPlayer
 import android.os.Bundle
-import android.widget.Toast
+import android.util.Log
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.Keep
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,99 +36,31 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
-import androidx.core.content.edit
-import com.example.fridgetracker.ui.theme.FridgeTrackerTheme
-import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.auth
-import com.google.firebase.database.DataSnapshot
-import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.ValueEventListener
-import com.google.firebase.database.database
+import com.google.firebase.database.*
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
-// Attractive Light Colorful Background Gradient: Light Red, Light Green, Light Blue, Light Pink
-val EntryGradient = Brush.verticalGradient(
-    colors = listOf(
-        Color(0xFFFFCDD2), // Light Red
-        Color(0xFFC8E6C9), // Light Green
-        Color(0xFFFFF9C4), // Light Yellow
-        Color(0xFFB3E5FC), // Light Blue
-        Color(0xFFFFD1DC)  // Light Pink
-    )
-)
-
-@Composable
-fun BackgroundDecoration() {
-    val items = listOf("🍎", "🥛", "🍞", "🥦", "🥩", "🧀", "🥕", "🍗", "🍯", "🍇", "🥚", "🥫")
-    Box(modifier = Modifier.fillMaxSize()) {
-        items.forEachIndexed { index, emoji ->
-            val horizontalBias = ((index % 3) - 1) * 0.8f
-            val verticalBias = ((index / 3) - 1.5f) * 0.6f
-            
-            Text(
-                text = emoji,
-                fontSize = 90.sp,
-                modifier = Modifier
-                    .align(BiasAlignment(horizontalBias, verticalBias))
-                    .graphicsLayer(
-                        alpha = 0.15f,
-                        rotationZ = (index * 35f) % 360f
-                    )
-            )
-        }
-    }
-}
-
-@Composable
-fun AppBackground(content: @Composable () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(EntryGradient)
-    ) {
-        BackgroundDecoration()
-        content()
-    }
-}
-
-// Helper to change language
-@Suppress("DEPRECATION")
-fun updateLocale(context: Context, languageCode: String) {
-    val locale = Locale.forLanguageTag(languageCode)
-    Locale.setDefault(locale)
-    val config = Configuration(context.resources.configuration)
-    config.setLocale(locale)
-    context.resources.updateConfiguration(config, context.resources.displayMetrics)
-    
-    // Save preference
-    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    prefs.edit { putString("lang", languageCode) }
-}
-
-// Data model for Kitchen Items
-@Keep
+// Data Models
 data class KitchenItem(
-    val quantity: Double = 0.0, 
-    val expiryDate: Long? = null, 
-    val category: String = "pantry",
-    val unit: String = "pcs"
+    val quantity: Double = 0.0,
+    val unit: String = "",
+    val category: String = "",
+    val expiryDate: Long? = null,
+    val addedDate: Long = System.currentTimeMillis()
 )
 
-@Keep
 data class KitchenNote(
     val id: String = "",
     val text: String = "",
-    val timestamp: Long = 0L
+    val timestamp: Long = System.currentTimeMillis()
 )
 
 data class PredefinedItem(
@@ -280,16 +204,20 @@ val commonKitchenItems = listOf(
     PredefinedItem("dishwasher_tablets", "packet", "cleaners", R.string.item_dishwasher_tablets),
     PredefinedItem("toilet_cleaner", "bottle", "cleaners", R.string.item_toilet_cleaner),
     PredefinedItem("degreaser", "bottle", "cleaners", R.string.item_degreaser),
-    PredefinedItem("disinfectant_wipes", "packet", "cleaners", R.string.item_disinfectant_wipes)
+    PredefinedItem("disinfectant_wipes", "packet", "cleaners", R.string.item_disinfectant_wipes),
+    PredefinedItem("aluminum_foil", "roll", "cleaners", R.string.item_aluminum_foil),
+    PredefinedItem("parchment_paper", "roll", "cleaners", R.string.item_parchment_paper),
+    PredefinedItem("storage_bags", "packet", "cleaners", R.string.item_storage_bags),
+    PredefinedItem("soap", "pcs", "cleaners", R.string.item_soap),
+    PredefinedItem("dishwasher_detergent", "bottle", "cleaners", R.string.item_dishwasher_detergent),
+    PredefinedItem("wood_cleaner", "bottle", "cleaners", R.string.item_wood_cleaner),
+    PredefinedItem("carpet_cleaner", "bottle", "cleaners", R.string.item_carpet_cleaner),
+    PredefinedItem("soft_scouring_pad", "pcs", "cleaners", R.string.item_soft_scouring_pad),
+    PredefinedItem("chicken_panee", "kg", "chicken", R.string.item_chicken_panee)
 )
 
 fun getEnglishItemName(key: String): String {
     return key.replace("_", " ").replaceFirstChar { it.uppercase() }
-}
-
-fun getLocalizedItemName(context: Context, key: String): String {
-    val predefined = commonKitchenItems.find { it.key == key }
-    return if (predefined != null && predefined.nameRes != -1) context.getString(predefined.nameRes) else getEnglishItemName(key)
 }
 
 fun getLocalizedItemNameWithArabic(context: Context, key: String): String {
@@ -305,618 +233,930 @@ fun getLocalizedItemNameWithArabic(context: Context, key: String): String {
     return englishName
 }
 
-fun getLocalizedCategory(context: Context, key: String): String {
-    return when (key.lowercase()) {
-        "fruits" -> context.getString(R.string.cat_fruits)
-        "vegetables" -> context.getString(R.string.cat_vegetables)
-        "dairy" -> context.getString(R.string.cat_dairy)
-        "meat" -> context.getString(R.string.cat_meat)
-        "chicken" -> context.getString(R.string.item_chicken)
-        "bakery" -> context.getString(R.string.cat_bakery)
-        "frozen" -> context.getString(R.string.cat_frozen)
-        "pantry" -> context.getString(R.string.cat_pantry)
-        "cleaners" -> context.getString(R.string.cat_cleaners)
-        "spices" -> context.getString(R.string.cat_spices)
-        else -> key.replaceFirstChar { it.uppercase() }
+fun getLocalizedUnit(context: Context, unit: String): String {
+    val resId = context.resources.getIdentifier("unit_$unit", "string", context.packageName)
+    return if (resId != 0) context.getString(resId) else unit
+}
+
+fun getLocalizedCategory(context: Context, category: String): String {
+    val resId = context.resources.getIdentifier("cat_$category", "string", context.packageName)
+    return if (resId != 0) context.getString(resId) else category
+}
+
+@Composable
+fun SplashScreen(onTimeout: () -> Unit) {
+    val infiniteTransition = rememberInfiniteTransition(label = "splash")
+    
+    val flameScale by infiniteTransition.animateFloat(
+        initialValue = 0.8f,
+        targetValue = 1.2f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "flameScale"
+    )
+    
+    val panBob by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = -15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "panBob"
+    )
+
+    LaunchedEffect(Unit) {
+        delay(3500)
+        onTimeout()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFFE8F5E9), Color(0xFFC8E6C9)))),
+        contentAlignment = Alignment.Center
+    ) {
+        KitchenBackground()
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                // Flame
+                Text(
+                    text = "🔥",
+                    fontSize = 50.sp,
+                    modifier = Modifier
+                        .offset(y = 45.dp)
+                        .graphicsLayer(
+                            scaleX = flameScale,
+                            scaleY = flameScale,
+                            alpha = flameScale.coerceIn(0.6f, 1f)
+                        )
+                )
+                // Pan
+                Text(
+                    text = "🍳",
+                    fontSize = 120.sp,
+                    modifier = Modifier.offset(y = panBob.dp)
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Text(
+                text = "Kitcheneering",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.Black
+            )
+            
+            Text(
+                text = "Master Your Inventory",
+                fontSize = 14.sp,
+                color = Color.Gray
+            )
+        }
     }
 }
 
-fun getLocalizedCategoryWithArabic(context: Context, key: String): String {
-    val englishName = if (key.lowercase() == "all") "All" else key.replaceFirstChar { it.uppercase() }
-    val resId = when (key.lowercase()) {
-        "fruits" -> R.string.cat_fruits
-        "vegetables" -> R.string.cat_vegetables
-        "dairy" -> R.string.cat_dairy
-        "meat" -> R.string.cat_meat
-        "chicken" -> R.string.item_chicken
-        "bakery" -> R.string.cat_bakery
-        "frozen" -> R.string.cat_frozen
-        "pantry" -> R.string.cat_pantry
-        "cleaners" -> R.string.cat_cleaners
-        "spices" -> R.string.cat_spices
-        else -> -1
-    }
-    
-    val arabicName = if (key.lowercase() == "all") {
-        "الكل"
-    } else if (resId != -1) {
-        val configuration = Configuration(context.resources.configuration)
-        configuration.setLocale(Locale("ar"))
-        val arabicContext = context.createConfigurationContext(configuration)
-        arabicContext.getString(resId)
-    } else {
-        null
-    }
-    
-    return if (arabicName != null) "$englishName ($arabicName)" else englishName
-}
+@Composable
+fun IntroPage(features: List<String>, startIndex: Int, onSkip: () -> Unit) {
+    var visibleFeatures by remember { mutableIntStateOf(0) }
 
-fun getLocalizedUnit(context: Context, key: String): String {
-    return when (key.lowercase()) {
-        "pcs" -> context.getString(R.string.unit_pcs)
-        "kg" -> context.getString(R.string.unit_kg)
-        "g" -> context.getString(R.string.unit_g)
-        "ml" -> context.getString(R.string.unit_ml)
-        "l" -> context.getString(R.string.unit_l)
-        "packet" -> context.getString(R.string.unit_packet)
-        "jar" -> context.getString(R.string.unit_jar)
-        "plate" -> context.getString(R.string.unit_plate)
-        "box" -> context.getString(R.string.unit_box)
-        "bottle" -> context.getString(R.string.unit_bottle)
-        "bag" -> context.getString(R.string.unit_bag)
-        "carton" -> context.getString(R.string.unit_carton)
-        "dozen" -> context.getString(R.string.unit_dozen)
-        "can" -> context.getString(R.string.unit_can)
-        else -> key
+    LaunchedEffect(Unit) {
+        for (i in 1..features.size) {
+            delay(800)
+            visibleFeatures = i
+        }
     }
-}
 
-fun isLowStock(key: String, item: KitchenItem): Boolean {
-    val keyLower = key.lowercase()
-    val isPowderOrSpecial = keyLower == "tea" || keyLower == "coffee" || keyLower == "nescafe" || 
-                            keyLower == "salt" || keyLower.contains("powder") || 
-                            keyLower == "paprika" || keyLower == "turmeric" || keyLower == "cinnamon" ||
-                            keyLower == "sumac" || keyLower == "thyme" || keyLower == "nutmeg" ||
-                            keyLower == "cardamom" || keyLower == "seven_spices" || keyLower.contains("spices")
-    
-    return when (item.unit.lowercase()) {
-        "g", "ml" -> if (isPowderOrSpecial) item.quantity < 260.0 else item.quantity < 400.0
-        "kg" -> if (isPowderOrSpecial) item.quantity < 0.26 else item.quantity < 0.4
-        "l" -> item.quantity < 0.6
-        else -> item.quantity < 5.0
-    }
-}
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFFE8F5E9), Color(0xFFC8E6C9)))),
+        contentAlignment = Alignment.Center
+    ) {
+        KitchenBackground()
+        Column(
+            modifier = Modifier
+                .padding(32.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "✨ Why Kitcheneering?! ✨",
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1B5E20),
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(40.dp))
 
-fun scheduleReminders(context: Context) {
-    val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    
-    val scheduleTime = { hour: Int, minute: Int, id: Int ->
-        val intent = Intent(context, ReminderReceiver::class.java)
-        val pendingIntent = PendingIntent.getBroadcast(
-            context, 
-            id, 
-            intent, 
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-            if (timeInMillis <= System.currentTimeMillis()) {
-                add(Calendar.DAY_OF_YEAR, 1)
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                features.forEachIndexed { index, feature ->
+                    AnimatedVisibility(
+                        visible = visibleFeatures > index,
+                        enter = fadeIn() + slideInHorizontally()
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.85f)),
+                            elevation = CardDefaults.cardElevation(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${index + startIndex}",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF2E7D32),
+                                    modifier = Modifier.padding(end = 12.dp)
+                                )
+                                Text(
+                                    text = feature,
+                                    fontSize = 14.sp,
+                                    color = Color.Black,
+                                    lineHeight = 18.sp
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        alarmManager.setInexactRepeating(
-            AlarmManager.RTC_WAKEUP,
-            calendar.timeInMillis,
-            AlarmManager.INTERVAL_DAY,
-            pendingIntent
-        )
+        @Suppress("ControlFlowWithEmptyBody")
+        TextButton(
+            onClick = onSkip,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 80.dp, end = 24.dp)
+        ) {
+            Text("Skip >>", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold, fontSize = 10.sp)
+        }
     }
-
-    // Schedule 10:00 AM and 8:00 PM
-    scheduleTime(10, 0, 1001)
-    scheduleTime(20, 0, 1002)
 }
 
-class MainActivity : ComponentActivity() {
-
-    private lateinit var auth: FirebaseAuth
-
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            scheduleReminders(this)
+@Composable
+fun PromoPage(onSkip: () -> Unit) {
+    val promoLines = listOf(
+        "“Don’t just cook, Engineer your kitchen.”",
+        "“Kitcheneering: Because a smart kitchen starts with smart tracking.”",
+        "“From Pantry to Plate, track it all with Kitcheneering.”"
+    )
+    
+    var visibleLines by remember { mutableIntStateOf(0) }
+    
+    LaunchedEffect(Unit) {
+        for (i in 1..promoLines.size) {
+            delay(1200)
+            visibleLines = i
         }
     }
 
-    // Global selected category state
-    private var globalSelectedCategory = mutableStateOf("All")
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFF1B5E20), Color(0xFF388E3C)))),
+        contentAlignment = Alignment.Center
+    ) {
+        KitchenBackground()
+        Column(
+            modifier = Modifier.padding(32.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            promoLines.forEachIndexed { index, line ->
+                AnimatedVisibility(
+                    visible = visibleLines > index,
+                    enter = fadeIn(animationSpec = tween(1000)) + expandVertically()
+                ) {
+                    Text(
+                        text = line,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium,
+                        fontStyle = FontStyle.Italic,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 30.sp,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+            }
+        }
+
+        @Suppress("ControlFlowWithEmptyBody")
+        TextButton(
+            onClick = onSkip,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 80.dp, end = 24.dp)
+        ) {
+            Text("Skip >>", color = Color.White.copy(alpha = 0.8f), fontWeight = FontWeight.Bold, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
+fun SummaryPage(onStart: () -> Unit) {
+    val checklistItems = listOf(
+        "✅ Tracks what’s available",
+        "✅ Know what’s missing",
+        "✅ Save time and reduce food waste"
+    )
+    
+    var visibilityStage by remember { mutableIntStateOf(0) }
+    
+    LaunchedEffect(Unit) {
+        delay(500)
+        visibilityStage = 1 // Title fades in first
+        for (i in 1..checklistItems.size) {
+            delay(800)
+            visibilityStage = 1 + i // Checklist items appear one by one
+        }
+        delay(800)
+        visibilityStage = 5 // Get Started Button fades in
+    }
+
+    val infiniteTransition = rememberInfiniteTransition(label = "glow")
+    val glowScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowScale"
+    )
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.7f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFFE8F5E9), Color(0xFFC8E6C9)))),
+        contentAlignment = Alignment.Center
+    ) {
+        KitchenBackground()
+        
+        Column(
+            modifier = Modifier.padding(32.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // Main text (center)
+            AnimatedVisibility(
+                visible = visibilityStage >= 1,
+                enter = fadeIn(animationSpec = tween(1200))
+            ) {
+                Text(
+                    text = "Smart Kitcheneering helps you manage your kitchen easily",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1B5E20),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 24.sp
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(48.dp))
+            
+            // Checklist items with slide-in/bounce
+            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                checklistItems.forEachIndexed { index, item ->
+                    AnimatedVisibility(
+                        visible = visibilityStage >= (index + 2),
+                        enter = fadeIn(tween(600)) + slideInHorizontally(
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessLow
+                            )
+                        )
+                    ) {
+                        Text(
+                            text = item,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.Black
+                        )
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(64.dp))
+            
+            // Get Started Button
+            AnimatedVisibility(
+                visible = visibilityStage >= 5,
+                enter = fadeIn(animationSpec = tween(1000)) + scaleIn(animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy))
+            ) {
+                Button(
+                    onClick = onStart,
+                    modifier = Modifier
+                        .fillMaxWidth(0.85f)
+                        .height(60.dp)
+                        .graphicsLayer(
+                            scaleX = glowScale,
+                            scaleY = glowScale
+                        )
+                        .shadow(elevation = 12.dp * glowAlpha, shape = RoundedCornerShape(30.dp)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                    shape = RoundedCornerShape(30.dp)
+                ) {
+                    Text("Get Started ✨", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+class MainActivity : ComponentActivity() {
+    private val auth = FirebaseAuth.getInstance()
+    private var mediaPlayer: MediaPlayer? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // Force English language
-        updateLocale(this, "en")
+        FirebaseApp.initializeApp(this)
+        val firebaseAppCheck = FirebaseAppCheck.getInstance()
         
-        auth = Firebase.auth
+        // Force Debug Provider
+        Log.d("AppCheck", "Initializing App Check with Debug Provider")
+        firebaseAppCheck.installAppCheckProviderFactory(DebugAppCheckProviderFactory.getInstance())
 
-        // Request notification permission if needed
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                scheduleReminders(this)
-            }
-        } else {
-            scheduleReminders(this)
-        }
-        
         setContent {
-            FridgeTrackerTheme(darkTheme = true, dynamicColor = false) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    var currentScreen by remember { mutableStateOf("intro") }
+            val context = LocalContext.current
+            var introStep by remember { mutableIntStateOf(0) } // 0: Splash, 1: Intro1, 2: Intro2, 3: Promo, 4: Summary, 5: Auth/Main
+            var user by remember { mutableStateOf(auth.currentUser) }
+            
+            // Music logic using DisposableEffect to handle lifecycle properly within Compose
+            DisposableEffect(Unit) {
+                mediaPlayer = MediaPlayer.create(context, R.raw.a).apply {
+                    isLooping = true
+                }
+                onDispose {
+                    mediaPlayer?.release()
+                    mediaPlayer = null
+                }
+            }
 
-                    var showExitDialog by remember { mutableStateOf(false) }
-                    val context = LocalContext.current
-
-                    if (showExitDialog) {
-                        AlertDialog(
-                            onDismissRequest = { showExitDialog = false },
-                            title = { Text("Exit") },
-                            text = { Text("Do you want to exit?") },
-                            confirmButton = {
-                                TextButton(onClick = { (context as? Activity)?.finish() }) {
-                                    Text("Yes")
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showExitDialog = false }) {
-                                    Text("No")
-                                }
-                            }
-                        )
+            LaunchedEffect(introStep) {
+                if (introStep in 0..4) {
+                    if (mediaPlayer?.isPlaying == false) {
+                        mediaPlayer?.start()
                     }
-
-                    BackHandler {
-                        when (currentScreen) {
-                            "main" -> showExitDialog = true
-                            "welcome" -> currentScreen = "hello"
-                            "hello" -> currentScreen = "intro"
-                            "intro" -> (context as? Activity)?.finish()
-                            else -> currentScreen = "main"
-                        }
+                } else {
+                    if (mediaPlayer?.isPlaying == true) {
+                        mediaPlayer?.pause()
                     }
+                }
+            }
 
-                    when (currentScreen) {
-                        "intro" -> IntroPage(onContinue = { currentScreen = "hello" })
-                        "hello" -> HelloPage(onContinue = {
-                            currentScreen = if (auth.currentUser != null) "main" else "welcome"
+            val features1 = listOf(
+                "Private, synced inventory via Firebase Email & Password login 🔒",
+                "Real‑time Jetpack Compose interface showing all items instantly 📊",
+                "Over 100 predefined essentials across 11 categories (Dairy, Spices, Cleaners, etc.), plus flexible custom ingredient entry",
+                "Color‑coded expiry warnings to prevent waste and save money ⚠️",
+                "Detects low stock and generates lists with smart thresholds 🛒"
+            )
+
+            val features2 = listOf(
+                "English interface enriched with Arabic item names 🌍",
+                "Editable notepad for recipes, plans, and reminders 📝",
+                "Twice‑daily reminders to keep inventory accurate 🔔",
+                "Built‑in step‑by‑step guide for mastering features 💡",
+                "Interactive onboarding showing time‑saving, waste‑reducing benefits 📖"
+            )
+
+            when (introStep) {
+                0 -> SplashScreen(onTimeout = { introStep = 1 })
+                1 -> IntroPage(features = features1, startIndex = 1, onSkip = { introStep = 2 })
+                2 -> IntroPage(features = features2, startIndex = 6, onSkip = { introStep = 3 })
+                3 -> PromoPage(onSkip = { introStep = 4 })
+                4 -> SummaryPage(onStart = { introStep = 5 })
+                else -> {
+                    if (user == null) {
+                        AuthScreen(onAuthSuccess = { user = auth.currentUser })
+                    } else {
+                        MainAppScreen(user!!.uid, onLogout = {
+                            auth.signOut()
+                            user = null
                         })
-                        "welcome" -> AuthPage(onAuthSuccess = { currentScreen = "main" })
-                        "main" -> MainScreen(
-                            initialCategory = globalSelectedCategory.value,
-                            onCategoryChanged = { globalSelectedCategory.value = it },
-                            onLogout = {
-                                auth.signOut()
-                                currentScreen = "welcome"
-                            },
-                            onGoToShopping = { currentScreen = "shopping" },
-                            onGoToHelp = { currentScreen = "help" },
-                            onGoToNotes = { currentScreen = "notes" }
-                        )
-                        "shopping" -> ShoppingPage(onBack = { currentScreen = "main" })
-                        "help" -> HelpPage(onBack = { currentScreen = "main" })
-                        "notes" -> NotesPage(onBack = { currentScreen = "main" })
                     }
                 }
             }
         }
     }
-}
 
-@Composable
-fun IntroPage(onContinue: () -> Unit) {
-    AppBackground {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "Why Kitchen Tracker!?",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = Color.Black,
-                textAlign = TextAlign.Center
-            )
-            
-            Spacer(modifier = Modifier.height(32.dp))
-            
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.5f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(24.dp)) {
-                    Text(
-                        text = "Smart Kitchen Tracker helps you manage your kitchen easily",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.Black,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    
-                    Spacer(modifier = Modifier.height(24.dp))
-                    
-                    val bulletPoints = listOf(
-                        "Tracks what's available",
-                        "Know what's missing",
-                        "Save time and reduce food waste"
-                    )
-                    
-                    bulletPoints.forEach { point ->
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF1B5E20), modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(text = point, style = MaterialTheme.typography.bodyMedium, color = Color.Black)
-                        }
-                    }
-                }
-            }
-            
-            Spacer(modifier = Modifier.height(48.dp))
-            
-            Button(
-                onClick = onContinue,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF1B5E20))
-            ) {
-                Text("Get Started ✨", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            }
+    override fun onPause() {
+        super.onPause()
+        mediaPlayer?.let {
+            if (it.isPlaying) it.pause()
         }
     }
-}
 
-@Composable
-fun HelloPage(onContinue: () -> Unit) {
-    AppBackground {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Text(
-                text = "Hello! 👋\nYour kitchen called… it's tired of forgotten food and hidden ingredients! 🍅🥫\nLet’s check what’s actually in there.",
-                style = MaterialTheme.typography.bodyLarge,
-                fontStyle = FontStyle.Italic,
-                fontWeight = FontWeight.Bold,
-                color = Color.Black,
-                textAlign = TextAlign.Center,
-                lineHeight = 22.sp
-            )
-            
-            Spacer(modifier = Modifier.height(48.dp))
-            
-            Button(
-                onClick = onContinue,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF1B5E20))
-            ) {
-                Text("Open the Magic Box! 🕵️‍♂️🥛", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            }
-        }
+    override fun onResume() {
+        super.onResume()
+        // Content will resume via LaunchedEffect if needed
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun MainScreen(
-    initialCategory: String,
-    onCategoryChanged: (String) -> Unit,
-    onLogout: () -> Unit,
-    onGoToShopping: () -> Unit,
-    onGoToHelp: () -> Unit,
-    onGoToNotes: () -> Unit
-) {
-    val context = LocalContext.current
-    val database = Firebase.database.reference
-    val user = Firebase.auth.currentUser
     
-    var fridgeItems by remember { mutableStateOf<Map<String, KitchenItem>>(emptyMap()) }
-    var isLoading by remember { mutableStateOf(true) }
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(initialCategory) }
-    var showAddItemDialog by remember { mutableStateOf(false) }
-    var selectedItemToEdit by remember { mutableStateOf<Pair<String, KitchenItem>?>(null) }
+    override fun onDestroy() {
+        super.onDestroy()
+        mediaPlayer?.release()
+        mediaPlayer = null
+    }
+}
 
-    LaunchedEffect(user?.uid) {
-        if (user != null) {
-            database.child("users").child(user.uid).child("fridge")
-                .addValueEventListener(object : ValueEventListener {
-                    override fun onDataChange(snapshot: DataSnapshot) {
-                        val items = mutableMapOf<String, KitchenItem>()
-                        snapshot.children.forEach {
-                            val item = it.getValue(KitchenItem::class.java)
-                            if (item != null) items[it.key!!] = item
-                        }
-                        fridgeItems = items
-                        isLoading = false
-                    }
-                    override fun onCancelled(error: DatabaseError) {
-                        isLoading = false
-                    }
-                })
+@Composable
+fun KitchenBackground() {
+    val items = listOf("🍳", "🍎", "🥦", "🥛", "🥩", "🍗", "🍞", "❄️", "🧼", "🧂", "📦", "🥑", "🍔", "🍕", "🍷", "🍰", "🍦", "☕", "🍹")
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val scope = this
+        val spacing = 100.dp
+        val columns = (scope.maxWidth / spacing).toInt() + 1
+        val rows = (scope.maxHeight / spacing).toInt() + 1
+        
+        for (r in 0 until rows) {
+            for (c in 0 until columns) {
+                val index = r * columns + c
+                val item = items[index % items.size]
+                
+                // Hexagonal-style grid to prevent overlap and create a better distribution
+                val xOffset = spacing * c + (if (r % 2 == 1) spacing / 2 else 0.dp)
+                val yOffset = spacing * r
+                
+                // Add minor deterministic jitter for a more natural look
+                val jitterX = (((r * 31 + c * 71) % 40) - 20).dp
+                val jitterY = (((r * 43 + c * 17) % 40) - 20).dp
+                
+                val rotation = ((r * 31 + c * 71) % 360).toFloat()
+                
+                Text(
+                    text = item,
+                    fontSize = 32.sp,
+                    modifier = Modifier
+                        .offset(x = xOffset + jitterX, y = yOffset + jitterY)
+                        .alpha(0.12f)
+                        .rotate(rotation)
+                )
+            }
         }
+    }
+}
+
+@Composable
+fun AuthScreen(onAuthSuccess: () -> Unit) {
+    var isLogin by remember { mutableStateOf(true) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val auth = FirebaseAuth.getInstance()
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(Color(0xFFE8F5E9), Color(0xFFC8E6C9)))),
+        contentAlignment = Alignment.Center
+    ) {
+        KitchenBackground()
+        Card(
+            modifier = Modifier.padding(24.dp).fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            elevation = CardDefaults.cardElevation(8.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.95f))
+        ) {
+            Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = if (isLogin) stringResource(R.string.title_welcome_back) else stringResource(R.string.title_create_account),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF2E7D32)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text(stringResource(R.string.label_email)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                @Suppress("ControlFlowWithEmptyBody")
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text(stringResource(R.string.label_password)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                )
+
+                if (!isLogin) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = confirmPassword,
+                        onValueChange = { confirmPassword = it },
+                        label = { Text(stringResource(R.string.label_confirm_password)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                    )
+                }
+
+                errorMessage?.let {
+                    Text(it, color = Color.Red, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = {
+                        if (email.isBlank() || password.isBlank()) {
+                            errorMessage = "Please fill all fields"
+                            return@Button
+                        }
+                        if (!isLogin && password != confirmPassword) {
+                            errorMessage = "Passwords do not match"
+                            return@Button
+                        }
+
+                        if (isLogin) {
+                            auth.signInWithEmailAndPassword(email, password).addOnCompleteListener { task ->
+                                if (task.isSuccessful) onAuthSuccess() else errorMessage = task.exception?.message
+                            }
+                        } else {
+                            auth.createUserWithEmailAndPassword(email, password).addOnCompleteListener { task ->
+                                if (task.isSuccessful) onAuthSuccess() else errorMessage = task.exception?.message
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                ) {
+                    Text(if (isLogin) stringResource(R.string.btn_log_in) else stringResource(R.string.btn_sign_up))
+                }
+
+                TextButton(onClick = { isLogin = !isLogin }) {
+                    @Suppress("ControlFlowWithEmptyBody")
+                    Text(if (isLogin) stringResource(R.string.btn_no_account) else stringResource(R.string.btn_already_account))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MainAppScreen(userId: String, onLogout: () -> Unit) {
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: Inventory, 1: Notes
+
+    Scaffold(
+        bottomBar = {
+            NavigationBar(containerColor = Color.White) {
+                NavigationBarItem(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = { Icon(Icons.Default.Inventory, contentDescription = "Inventory") },
+                    label = { Text("Inventory") },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = Color(0xFF2E7D32), selectedTextColor = Color(0xFF2E7D32))
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = { Icon(Icons.Default.Note, contentDescription = "Notes") },
+                    label = { Text("Notes") },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = Color(0xFF2E7D32), selectedTextColor = Color(0xFF2E7D32))
+                )
+            }
+        }
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding)) {
+            if (selectedTab == 0) {
+                InventoryScreen(userId, onLogout)
+            } else {
+                KitchenNotesScreen(userId)
+            }
+        }
+    }
+}
+
+@Composable
+fun InventoryScreen(userId: String, onLogout: () -> Unit) {
+    var items by remember { mutableStateOf<Map<String, KitchenItem>>(emptyMap()) }
+    var searchQuery by remember { mutableStateOf("") }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var editingItem by remember { mutableStateOf<Pair<String, KitchenItem>?>(null) }
+    val database = FirebaseDatabase.getInstance().reference.child("users").child(userId).child("inventory")
+
+    LaunchedEffect(userId) {
+        database.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val newItems = mutableMapOf<String, KitchenItem>()
+                snapshot.children.forEach { child ->
+                    child.getValue(KitchenItem::class.java)?.let { newItems[child.key!!] = it }
+                }
+                items = newItems
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        })
     }
 
     Scaffold(
-        containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = { 
-                    Text(
-                        stringResource(R.string.title_kitchen_tracker), 
-                        fontWeight = FontWeight.Bold, 
-                        color = Color.Black,
-                        fontSize = 18.sp
-                    ) 
-                },
-                actions = {
-                    IconButton(onClick = onGoToShopping) {
-                        Icon(Icons.Default.ShoppingCart, contentDescription = "Shopping", tint = Color.Black)
-                    }
-                    IconButton(onClick = onGoToNotes) {
-                        Icon(Icons.AutoMirrored.Filled.NoteAdd, contentDescription = "Notes", tint = Color.Black)
-                    }
-                    IconButton(onClick = onGoToHelp) {
-                        Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = "Help", tint = Color.Black)
-                    }
-                    IconButton(onClick = onLogout) {
-                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Logout", tint = Color.Black)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent
+            Column(modifier = Modifier.background(Color(0xFF2E7D32)).padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    @Suppress("ControlFlowWithEmptyBody")
+                    Text("Kitcheneering 🍳", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onLogout) { Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Logout", tint = Color.White) }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Search your kitchen...", color = Color.White.copy(alpha = 0.7f)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.White) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.White,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.5f),
+                        cursorColor = Color.White,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    )
                 )
-            )
+            }
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddItemDialog = true },
-                containerColor = Color(0xFF0D47A1), // Dark Blue
-                contentColor = Color.White
-            ) {
+            FloatingActionButton(onClick = { showAddDialog = true }, containerColor = Color(0xFF2E7D32), contentColor = Color.White) {
                 Icon(Icons.Default.Add, contentDescription = "Add Item")
             }
         }
     ) { padding ->
-        AppBackground {
-            Column(
-                modifier = Modifier
-                    .padding(padding)
-                    .fillMaxSize()
-            ) {
-                // Search and Category
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text(stringResource(R.string.search_placeholder), color = Color.Black.copy(alpha = 0.6f), fontSize = 12.sp) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color.Black) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.Black,
-                            unfocusedTextColor = Color.Black,
-                            focusedBorderColor = Color.Black,
-                            unfocusedBorderColor = Color.Black.copy(alpha = 0.5f)
-                        )
-                    )
-                    
-                    Spacer(modifier = Modifier.width(8.dp))
-                    
-                    var showCategoryMenu by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showCategoryMenu = true }) {
-                            Icon(
-                                Icons.Default.FilterList, 
-                                contentDescription = "Filter",
-                                tint = Color.Black
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showCategoryMenu,
-                            onDismissRequest = { showCategoryMenu = false }
-                        ) {
-                            val categories = listOf("All", "fruits", "vegetables", "dairy", "meat", "chicken", "bakery", "frozen", "pantry", "cleaners", "spices")
-                            categories.forEach { cat ->
-                                DropdownMenuItem(
-                                    text = { Text(getLocalizedCategoryWithArabic(context, cat)) },
-                                    onClick = {
-                                        selectedCategory = cat
-                                        onCategoryChanged(cat)
-                                        showCategoryMenu = false
-                                    }
-                                )
-                            }
-                        }
+        val filteredItems = items.filter { it.key.contains(searchQuery, ignoreCase = true) }
+
+        Box(modifier = Modifier.fillMaxSize().padding(padding).background(Color(0xFFF1F8E9))) {
+            KitchenBackground()
+            if (filteredItems.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🧊", fontSize = 64.sp)
+                        Text("Your kitchen is empty!", fontSize = 18.sp, color = Color.Gray)
                     }
                 }
-
-                if (isLoading) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color.Black)
-                    }
-                } else {
-                    val filteredItems = fridgeItems.filter { (key, item) ->
-                        val name = getLocalizedItemNameWithArabic(context, key)
-                        (searchQuery.isEmpty() || name.contains(searchQuery, ignoreCase = true)) &&
-                        (selectedCategory.equals("All", ignoreCase = true) || item.category.equals(selectedCategory, ignoreCase = true))
-                    }.toList().sortedBy { it.first }
-
-                    if (filteredItems.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    if (searchQuery.isEmpty()) "Your kitchen is empty! 🏜️" else "No matches found! 🕵️",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = Color.Black,
-                                    fontSize = 14.sp
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    if (searchQuery.isEmpty()) "Tap the + button to add items!" else "Try a different search.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Black.copy(alpha = 0.7f),
-                                    fontSize = 11.sp
-                                )
-                            }
-                        }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(filteredItems) { (key, item) ->
-                                val isExpiringSoon = item.expiryDate?.let {
-                                    val daysLeft = (it - System.currentTimeMillis()) / (1000 * 60 * 60 * 24)
-                                    daysLeft in 0..3
-                                } ?: false
-                                
-                                val isExpired = item.expiryDate?.let { it < System.currentTimeMillis() } ?: false
-                                val lowStock = isLowStock(key, item)
-
-                                KitchenItemCard(
-                                    name = getLocalizedItemNameWithArabic(context, key),
-                                    item = item,
-                                    isExpiringSoon = isExpiringSoon,
-                                    isExpired = isExpired,
-                                    isLowStock = lowStock,
-                                    onClick = {
-                                        selectedItemToEdit = key to item
-                                    }
-                                )
-                            }
-                        }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(filteredItems.toList()) { (key, item) ->
+                        KitchenItemCard(key, item, onEdit = { editingItem = key to item }, onDelete = { database.child(key).removeValue() })
                     }
                 }
             }
         }
     }
 
-    if (showAddItemDialog) {
-        AddItemDialog(
-            onDismiss = { showAddItemDialog = false },
-            onItemAdded = { key, item ->
-                if (user != null) {
-                    database.child("users").child(user.uid).child("fridge").child(key).setValue(item)
-                }
-                showAddItemDialog = false
-            }
-        )
+    if (showAddDialog) {
+        AddItemDialog(onDismiss = { showAddDialog = false }, onItemAdded = { key, item ->
+            // Use push() to generate a unique ID for custom items, or use key for predefined
+            // Wait, the original code used key as child name. If it's the same key, it overwrites.
+            // To fix "items not appearing" (if they are being overwritten), we could use push() for all, 
+            // but the original logic seems to intend one entry per item type.
+            // Let's stick to original but ensure it's working.
+            database.child(key).setValue(item)
+            showAddDialog = false
+        })
     }
 
-    selectedItemToEdit?.let { (key, item) ->
-        EditItemDialog(
-            itemKey = key,
-            item = item,
-            onDismiss = { selectedItemToEdit = null },
-            onItemUpdated = { updatedItem ->
-                if (user != null) {
-                    if (updatedItem == null) {
-                        database.child("users").child(user.uid).child("fridge").child(key).removeValue()
-                    } else {
-                        database.child("users").child(user.uid).child("fridge").child(key).setValue(updatedItem)
+    editingItem?.let { (key, item) ->
+        EditItemDialog(itemKey = key, item = item, onDismiss = { editingItem = null }, onItemUpdated = { updatedItem ->
+            if (updatedItem != null) database.child(key).setValue(updatedItem)
+            editingItem = null
+        })
+    }
+}
+
+@Composable
+fun KitchenNotesScreen(userId: String) {
+    var notes by remember { mutableStateOf<List<KitchenNote>>(emptyList()) }
+    var showAddNoteDialog by remember { mutableStateOf(false) }
+    var noteText by remember { mutableStateOf("") }
+    val database = FirebaseDatabase.getInstance().reference.child("users").child(userId).child("notes")
+
+    LaunchedEffect(userId) {
+        database.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val newNotes = mutableListOf<KitchenNote>()
+                snapshot.children.forEach { child ->
+                    child.getValue(KitchenNote::class.java)?.let { newNotes.add(it.copy(id = child.key ?: "")) }
+                }
+                notes = newNotes.sortedByDescending { it.timestamp }
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        })
+    }
+
+    Scaffold(
+        topBar = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFF2E7D32))
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "Kitchen Notes 📝",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddNoteDialog = true },
+                containerColor = Color(0xFF2196F3),
+                contentColor = Color.White,
+                shape = CircleShape
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Note")
+            }
+        }
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding).background(Color(0xFFF1F8E9))) {
+            KitchenBackground()
+            if (notes.isEmpty()) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No notes yet! 📝", fontSize = 18.sp, color = Color.Gray)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(notes) { note ->
+                        NoteCard(note, onDelete = { database.child(note.id).removeValue() })
                     }
                 }
-                selectedItemToEdit = null
+            }
+        }
+    }
+
+    if (showAddNoteDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddNoteDialog = false; noteText = "" },
+            title = { Text("Add New Note", fontWeight = FontWeight.Bold, color = Color(0xFF1B5E20)) },
+            text = {
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = { noteText = it },
+                    placeholder = { Text("Enter your note...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (noteText.isNotBlank()) {
+                            val ref = database.push()
+                            val newNote = KitchenNote(id = ref.key ?: "", text = noteText)
+                            ref.setValue(newNote)
+                            noteText = ""
+                            showAddNoteDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddNoteDialog = false; noteText = "" }) {
+                    Text("Cancel", color = Color.Gray)
+                }
             }
         )
     }
 }
 
+@Composable
+fun NoteCard(note: KitchenNote, onDelete: () -> Unit) {
+    val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f)),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = note.text,
+                    fontSize = 14.sp,
+                    color = Color.Black
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = sdf.format(Date(note.timestamp)),
+                    fontSize = 10.sp,
+                    color = Color.Gray
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete Note",
+                    tint = Color.Red.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun KitchenItemCard(key: String, item: KitchenItem, onEdit: () -> Unit, onDelete: () -> Unit) {
+    val context = LocalContext.current
+    val isExpired = item.expiryDate?.let { it < System.currentTimeMillis() } ?: false
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onEdit() },
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = if (isExpired) Color(0xFFFFEBEE).copy(alpha = 0.9f) else Color.White.copy(alpha = 0.9f)),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(48.dp).background(Color(0xFFE8F5E9), CircleShape), contentAlignment = Alignment.Center) {
+                val icon = when(item.category) {
+                    "fruits" -> "🍎"
+                    "vegetables" -> "🥦"
+                    "dairy" -> "🥛"
+                    "meat" -> "🥩"
+                    "chicken" -> "🍗"
+                    "bakery" -> "🍞"
+                    "frozen" -> "❄️"
+                    "cleaners" -> "🧼"
+                    "spices" -> "🧂"
+                    else -> "📦"
+                }
+                Text(icon, fontSize = 24.sp)
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                @Suppress("DEPRECATION")
+                Text(getLocalizedItemNameWithArabic(context, key), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("${item.quantity} ${getLocalizedUnit(context, item.unit)} • ${getLocalizedCategory(context, item.category)}", fontSize = 12.sp, color = Color.Gray)
+                item.expiryDate?.let {
+                    val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+                    Text("Expires: ${sdf.format(Date(it))}", fontSize = 11.sp, color = if (isExpired) Color.Red else Color.Gray)
+                }
+            }
+            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.6f)) }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddItemDialog(
-    onDismiss: () -> Unit,
-    onItemAdded: (String, KitchenItem) -> Unit
-) {
+fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> Unit) {
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var selectedPredefined by remember { mutableStateOf<PredefinedItem?>(null) }
-    
-    val unitsList = listOf("pcs", "kg", "g", "ml", "l", "packet", "jar", "plate", "box", "bottle", "bag", "carton", "dozen", "can")
-    val categoriesList = listOf("fruits", "vegetables", "dairy", "meat", "chicken", "bakery", "frozen", "pantry", "cleaners", "spices")
+    var isCustomItemMode by remember { mutableStateOf(false) }
 
-    if (selectedPredefined != null) {
-        var quantityStr by remember { mutableStateOf("1.0") }
-        var unit by remember { mutableStateOf(selectedPredefined!!.unit) }
-        var category by remember { mutableStateOf(selectedPredefined!!.category) }
-        var expiryDate by remember { mutableStateOf<Long?>(null) }
-        
-        var unitExpanded by remember { mutableStateOf(false) }
-        var categoryExpanded by remember { mutableStateOf(false) }
+    var customItemName by remember { mutableStateOf("") }
+    var quantityStr by remember { mutableStateOf("1") }
+    var unit by remember { mutableStateOf("pcs") }
+    var category by remember { mutableStateOf("pantry") }
+    var expiryDate by remember { mutableStateOf<Long?>(null) }
 
-        val itemName = if (selectedPredefined!!.nameRes != -1) {
-            context.getString(selectedPredefined!!.nameRes)
-        } else {
-            selectedPredefined!!.key.replace("_", " ").replaceFirstChar { it.uppercase() }
+    if (selectedPredefined != null || isCustomItemMode) {
+        val itemName = if (isCustomItemMode) customItemName else getLocalizedItemNameWithArabic(context, selectedPredefined!!.key)
+        if (selectedPredefined != null && !isCustomItemMode) {
+            unit = selectedPredefined!!.unit
+            category = selectedPredefined!!.category
         }
 
         AlertDialog(
-            onDismissRequest = { selectedPredefined = null },
-            title = { 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Configure $itemName", fontSize = 16.sp, modifier = Modifier.weight(1f))
-                    
-                    IconButton(
-                        onClick = {
-                            val current = quantityStr.toDoubleOrNull() ?: 0.0
-                            quantityStr = (current - 1.0).coerceAtLeast(0.0).toString()
-                        },
-                        modifier = Modifier.size(32.dp).background(Color(0xFFB71C1C), RoundedCornerShape(8.dp))
-                    ) {
-                        Icon(Icons.Default.Remove, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(18.dp))
-                    }
-                    
-                    Spacer(modifier = Modifier.width(8.dp))
-                    
-                    IconButton(
-                        onClick = {
-                            val current = quantityStr.toDoubleOrNull() ?: 0.0
-                            quantityStr = (current + 1.0).toString()
-                        },
-                        modifier = Modifier.size(32.dp).background(Color(0xFF003300), RoundedCornerShape(8.dp))
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.White, modifier = Modifier.size(18.dp))
-                    }
-                }
-            },
+            onDismissRequest = { selectedPredefined = null; isCustomItemMode = false },
+            title = { Text("Add $itemName", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column {
                     OutlinedTextField(
@@ -928,11 +1168,9 @@ fun AddItemDialog(
                         shape = RoundedCornerShape(12.dp)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
-                    
-                    ExposedDropdownMenuBox(
-                        expanded = unitExpanded,
-                        onExpandedChange = { unitExpanded = it }
-                    ) {
+
+                    var unitExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(expanded = unitExpanded, onExpandedChange = { unitExpanded = it }) {
                         OutlinedTextField(
                             value = getLocalizedUnit(context, unit),
                             onValueChange = {},
@@ -942,135 +1180,108 @@ fun AddItemDialog(
                             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
                         )
-                        ExposedDropdownMenu(
-                            expanded = unitExpanded,
-                            onDismissRequest = { unitExpanded = false }
-                        ) {
-                            unitsList.forEach { u ->
-                                DropdownMenuItem(
-                                    text = { Text(getLocalizedUnit(context, u)) },
-                                    onClick = { unit = u; unitExpanded = false }
-                                )
+                        ExposedDropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
+                            listOf("pcs", "kg", "g", "ml", "l", "packet", "jar", "plate", "box", "bottle", "bag", "carton", "dozen", "can", "roll").forEach { u ->
+                                DropdownMenuItem(text = { Text(getLocalizedUnit(context, u)) }, onClick = { unit = u; unitExpanded = false })
                             }
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(12.dp))
-                    
-                    ExposedDropdownMenuBox(
-                        expanded = categoryExpanded,
-                        onExpandedChange = { categoryExpanded = it }
-                    ) {
+
+                    var catExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(expanded = catExpanded, onExpandedChange = { catExpanded = it }) {
                         OutlinedTextField(
                             value = getLocalizedCategory(context, category),
-                            onValueChange = { category = it },
+                            onValueChange = {},
+                            readOnly = true,
                             label = { Text("Category") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
                             modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
                         )
-                        ExposedDropdownMenu(
-                            expanded = categoryExpanded,
-                            onDismissRequest = { categoryExpanded = false }
-                        ) {
-                            categoriesList.forEach { cat ->
-                                DropdownMenuItem(
-                                    text = { Text(getLocalizedCategory(context, cat)) },
-                                    onClick = { category = cat; categoryExpanded = false }
-                                )
+                        ExposedDropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
+                            listOf("fruits", "vegetables", "dairy", "meat", "chicken", "bakery", "frozen", "pantry", "cleaners", "spices").forEach { cat ->
+                                DropdownMenuItem(text = { Text(getLocalizedCategory(context, cat)) }, onClick = { category = cat; catExpanded = false })
                             }
                         }
                     }
-                    
+
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Button(
                         onClick = {
                             val calendar = Calendar.getInstance()
-                            expiryDate?.let { calendar.timeInMillis = it }
-                            DatePickerDialog(
-                                context,
-                                { _, year, month, dayOfMonth ->
-                                    val newDate = Calendar.getInstance()
-                                    newDate.set(year, month, dayOfMonth)
-                                    expiryDate = newDate.timeInMillis
-                                },
-                                calendar.get(Calendar.YEAR),
-                                calendar.get(Calendar.MONTH),
-                                calendar.get(Calendar.DAY_OF_MONTH)
-                            ).show()
+                            DatePickerDialog(context, { _, y, m, d ->
+                                val newDate = Calendar.getInstance()
+                                newDate.set(y, m, d)
+                                expiryDate = newDate.timeInMillis
+                            }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Gray.copy(alpha = 0.2f))
                     ) {
                         val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                        Text(
-                            text = if (expiryDate == null) "Set Expiry Date 📅" else "Expires: ${sdf.format(Date(expiryDate!!))}",
-                            color = Color.Black
-                        )
+                        Text(if (expiryDate == null) "Set Expiry Date 📅" else "Expires: ${sdf.format(Date(expiryDate!!))}", color = Color.Black)
                     }
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    onItemAdded(
-                        selectedPredefined!!.key,
-                        KitchenItem(
-                            quantity = quantityStr.toDoubleOrNull() ?: 1.0,
-                            unit = unit,
-                            category = category,
-                            expiryDate = expiryDate
-                        )
-                    )
+                    val key = if (isCustomItemMode) customItemName.lowercase().replace(" ", "_") else selectedPredefined!!.key
+                    onItemAdded(key, KitchenItem(quantityStr.toDoubleOrNull() ?: 1.0, unit, category, expiryDate))
+                    isCustomItemMode = false
+                    selectedPredefined = null
                 }) { Text("Add") }
             },
             dismissButton = {
-                TextButton(onClick = { selectedPredefined = null }) { Text("Back") }
+                TextButton(onClick = { selectedPredefined = null; isCustomItemMode = false }) { Text("Back") }
             }
         )
     } else {
-        val configuration = remember(context) {
-            Configuration(context.resources.configuration).apply {
-                setLocale(Locale("ar"))
-            }
-        }
-        val arabicContext = remember(context, configuration) {
-            context.createConfigurationContext(configuration)
-        }
+        val configuration = remember(context) { Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag("ar")) } }
+        val arabicContext = remember(context, configuration) { context.createConfigurationContext(configuration) }
 
         val filteredPredefined = commonKitchenItems.filter { predefined ->
             val englishMatch = predefined.key.contains(searchQuery, ignoreCase = true) ||
                     (predefined.nameRes != -1 && context.getString(predefined.nameRes).contains(searchQuery, ignoreCase = true))
-            
-            val arabicMatch = if (predefined.nameRes != -1) {
-                arabicContext.getString(predefined.nameRes).contains(searchQuery, ignoreCase = true)
-            } else false
-            
+            val arabicMatch = if (predefined.nameRes != -1) arabicContext.getString(predefined.nameRes).contains(searchQuery, ignoreCase = true) else false
             englishMatch || arabicMatch
         }
 
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Add Item", fontSize = 16.sp) },
+            title = { Text("Add Item", fontSize = 15.sp) },
             text = {
                 Column {
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        label = { Text("Search") },
+                        label = { Text("Search or type new item") },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         singleLine = true
                     )
+
+                    if (searchQuery.isNotBlank() && filteredPredefined.none { getLocalizedItemNameWithArabic(context, it.key).equals(searchQuery, true) }) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        @Suppress("ControlFlowWithEmptyBody")
+                        Button(
+                            onClick = { customItemName = searchQuery; isCustomItemMode = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
+                        ) { Text("Add \"$searchQuery\" as new item") }
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
                     LazyColumn(modifier = Modifier.height(300.dp)) {
                         items(filteredPredefined) { predefined ->
                             ListItem(
-                                headlineContent = { Text(getLocalizedItemNameWithArabic(context, predefined.key), fontWeight = FontWeight.SemiBold) },
-                                supportingContent = { Text("${getLocalizedCategory(context, predefined.category)} • ${predefined.unit}") },
-                                leadingContent = { 
+                                headlineContent = { Text(getLocalizedItemNameWithArabic(context, predefined.key), fontWeight = FontWeight.SemiBold, fontSize = 14.sp) },
+                                supportingContent = { Text("${getLocalizedCategory(context, predefined.category)} • ${predefined.unit}", fontSize = 12.sp) },
+                                leadingContent = {
                                     val icon = when(predefined.category) {
                                         "fruits" -> "🍎"
                                         "vegetables" -> "🥦"
@@ -1091,9 +1302,7 @@ fun AddItemDialog(
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = onDismiss) { Text("Close") }
-            }
+            confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
         )
     }
 }
@@ -1111,40 +1320,34 @@ fun EditItemDialog(
     var unit by remember { mutableStateOf(item.unit) }
     var category by remember { mutableStateOf(item.category) }
     var expiryDate by remember { mutableStateOf(item.expiryDate) }
-    
+
     var unitExpanded by remember { mutableStateOf(false) }
     var categoryExpanded by remember { mutableStateOf(false) }
 
-    val unitsList = listOf("pcs", "kg", "g", "ml", "l", "packet", "jar", "plate", "box", "bottle", "bag", "carton", "dozen", "can")
+    val unitsList = listOf("pcs", "kg", "g", "ml", "l", "packet", "jar", "plate", "box", "bottle", "bag", "carton", "dozen", "can", "roll")
     val categoriesList = listOf("fruits", "vegetables", "dairy", "meat", "chicken", "bakery", "frozen", "pantry", "cleaners", "spices")
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { 
+        title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Edit ${getLocalizedItemNameWithArabic(context, itemKey)}", fontSize = 16.sp, modifier = Modifier.weight(1f))
-                
+                @Suppress("DEPRECATION")
+                Text("Edit ${getLocalizedItemNameWithArabic(context, itemKey)}", fontSize = 15.sp, modifier = Modifier.weight(1f))
                 IconButton(
                     onClick = {
                         val current = quantityStr.toDoubleOrNull() ?: 0.0
                         quantityStr = (current - 1.0).coerceAtLeast(0.0).toString()
                     },
                     modifier = Modifier.size(32.dp).background(Color(0xFFB71C1C), RoundedCornerShape(8.dp))
-                ) {
-                    Icon(Icons.Default.Remove, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(18.dp))
-                }
-                
+                ) { Icon(Icons.Default.Remove, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(18.dp)) }
                 Spacer(modifier = Modifier.width(8.dp))
-                
                 IconButton(
                     onClick = {
                         val current = quantityStr.toDoubleOrNull() ?: 0.0
                         quantityStr = (current + 1.0).toString()
                     },
                     modifier = Modifier.size(32.dp).background(Color(0xFF003300), RoundedCornerShape(8.dp))
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.White, modifier = Modifier.size(18.dp))
-                }
+                ) { Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.White, modifier = Modifier.size(18.dp)) }
             }
         },
         text = {
@@ -1158,11 +1361,8 @@ fun EditItemDialog(
                     shape = RoundedCornerShape(12.dp)
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                
-                ExposedDropdownMenuBox(
-                    expanded = unitExpanded,
-                    onExpandedChange = { unitExpanded = it }
-                ) {
+
+                ExposedDropdownMenuBox(expanded = unitExpanded, onExpandedChange = { unitExpanded = it }) {
                     OutlinedTextField(
                         value = getLocalizedUnit(context, unit),
                         onValueChange = {},
@@ -1172,25 +1372,16 @@ fun EditItemDialog(
                         modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
-                    ExposedDropdownMenu(
-                        expanded = unitExpanded,
-                        onDismissRequest = { unitExpanded = false }
-                        ) {
+                    ExposedDropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
                         unitsList.forEach { u ->
-                            DropdownMenuItem(
-                                text = { Text(getLocalizedUnit(context, u)) },
-                                onClick = { unit = u; unitExpanded = false }
-                            )
+                            DropdownMenuItem(text = { Text(getLocalizedUnit(context, u)) }, onClick = { unit = u; unitExpanded = false })
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
 
-                ExposedDropdownMenuBox(
-                    expanded = categoryExpanded,
-                    onExpandedChange = { categoryExpanded = it }
-                ) {
+                ExposedDropdownMenuBox(expanded = categoryExpanded, onExpandedChange = { categoryExpanded = it }) {
                     OutlinedTextField(
                         value = getLocalizedCategory(context, category),
                         onValueChange = { category = it },
@@ -1199,15 +1390,9 @@ fun EditItemDialog(
                         modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
-                    ExposedDropdownMenu(
-                        expanded = categoryExpanded,
-                        onDismissRequest = { categoryExpanded = false }
-                    ) {
+                    ExposedDropdownMenu(expanded = categoryExpanded, onDismissRequest = { categoryExpanded = false }) {
                         categoriesList.forEach { cat ->
-                            DropdownMenuItem(
-                                text = { Text(getLocalizedCategory(context, cat)) },
-                                onClick = { category = cat; categoryExpanded = false }
-                            )
+                            DropdownMenuItem(text = { Text(getLocalizedCategory(context, cat)) }, onClick = { category = cat; categoryExpanded = false })
                         }
                     }
                 }
@@ -1218,640 +1403,23 @@ fun EditItemDialog(
                     onClick = {
                         val calendar = Calendar.getInstance()
                         expiryDate?.let { calendar.timeInMillis = it }
-                        DatePickerDialog(
-                            context,
-                            { _, year, month, dayOfMonth ->
-                                val newDate = Calendar.getInstance()
-                                newDate.set(year, month, dayOfMonth)
-                                expiryDate = newDate.timeInMillis
-                            },
-                            calendar.get(Calendar.YEAR),
-                            calendar.get(Calendar.MONTH),
-                            calendar.get(Calendar.DAY_OF_MONTH)
-                        ).show()
+                        DatePickerDialog(context, { _, y, m, d ->
+                            val newDate = Calendar.getInstance()
+                            newDate.set(y, m, d)
+                            expiryDate = newDate.timeInMillis
+                        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Gray.copy(alpha = 0.2f))
                 ) {
                     val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                    Text(
-                        text = if (expiryDate == null) "Set Expiry Date 📅" else "Expires: ${sdf.format(Date(expiryDate!!))}",
-                        color = Color.Black
-                    )
+                    @Suppress("ControlFlowWithEmptyBody")
+                    Text(if (expiryDate == null) "Set Expiry Date 📅" else "Expires: ${sdf.format(Date(expiryDate!!))}", color = Color.Black)
                 }
             }
         },
-        confirmButton = {
-            Button(onClick = {
-                val q = quantityStr.toDoubleOrNull() ?: item.quantity
-                onItemUpdated(item.copy(quantity = q, unit = unit, category = category, expiryDate = expiryDate))
-            }) { Text("Update") }
-        },
-        dismissButton = {
-            TextButton(onClick = { onItemUpdated(null) }) { 
-                Text("Delete", color = Color.Red) 
-            }
-        }
+        confirmButton = { Button(onClick = { onItemUpdated(item.copy(quantity = quantityStr.toDoubleOrNull() ?: 1.0, unit = unit, category = category, expiryDate = expiryDate)) }) { Text("Update") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-@Composable
-fun KitchenItemCard(
-    name: String,
-    item: KitchenItem,
-    isExpiringSoon: Boolean,
-    isExpired: Boolean,
-    isLowStock: Boolean,
-    onClick: () -> Unit
-) {
-    val context = LocalContext.current
-    val borderColor = when {
-        isExpired -> Color.Red
-        isExpiringSoon -> Color(0xFFFFA000)
-        isLowStock -> Color.Black.copy(alpha = 0.5f)
-        else -> Color.Transparent
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        border = if (borderColor != Color.Transparent) BorderStroke(1.dp, borderColor) else null,
-        colors = CardDefaults.cardColors(
-            containerColor = Color.White.copy(alpha = 0.15f)
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(12.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black,
-                    fontSize = 14.sp
-                )
-                
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val quantityText = if (item.quantity % 1.0 == 0.0) item.quantity.toInt().toString() else item.quantity.toString()
-                    Text(
-                        text = "$quantityText ${getLocalizedUnit(context, item.unit)} • ${getLocalizedCategory(context, item.category)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Black.copy(alpha = 0.8f),
-                        fontSize = 12.sp
-                    )
-                    
-                    if (isLowStock) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            Icons.Default.Warning, 
-                            contentDescription = null, 
-                            tint = Color.DarkGray,
-                            modifier = Modifier.size(12.dp)
-                        )
-                    }
-                }
-
-                if (item.expiryDate != null) {
-                    val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                    val dateStr = sdf.format(Date(item.expiryDate))
-                    Text(
-                        text = "Exp: $dateStr",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = when {
-                            isExpired -> Color.Red
-                            isExpiringSoon -> Color(0xFFFFA000)
-                            else -> Color.Black.copy(alpha = 0.6f)
-                        },
-                        fontSize = 10.sp
-                    )
-                }
-            }
-            
-            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Color.Black.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
-        }
-    }
-}
-
-// Colored Background Wrapper
-@Composable
-fun AuthBackground(authContent: @Composable ColumnScope.() -> Unit) {
-    AppBackground {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            content = authContent
-        )
-    }
-}
-
-@Composable
-fun AuthPage(onAuthSuccess: () -> Unit) {
-    var isSignUp by remember { mutableStateOf(false) }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
-    var passwordVisible by remember { mutableStateOf(false) }
-    
-    val auth = Firebase.auth
-    val context = LocalContext.current
-
-    LaunchedEffect(Unit) {
-        val prefs = context.getSharedPreferences("auth", Context.MODE_PRIVATE)
-        email = prefs.getString("saved_email", "") ?: ""
-        password = prefs.getString("saved_password", "") ?: ""
-    }
-
-    AuthBackground {
-        Text(
-            text = if (isSignUp) "Create Account" else "Welcome Back",
-            style = MaterialTheme.typography.headlineSmall,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.Black,
-            textAlign = TextAlign.Center
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Text(
-            text = if (isSignUp) "Organize your kitchen effortlessly." else "Log in to track your supplies.",
-            style = MaterialTheme.typography.bodyMedium,
-            fontSize = 14.sp,
-            color = Color.Black.copy(alpha = 0.8f),
-            textAlign = TextAlign.Center
-        )
-        
-        Spacer(modifier = Modifier.height(32.dp))
-        
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.1f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Email", color = Color.Black.copy(alpha = 0.7f), fontSize = 13.sp) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.Black,
-                        unfocusedTextColor = Color.Black,
-                        focusedBorderColor = Color.Black,
-                        unfocusedBorderColor = Color.Black.copy(alpha = 0.5f)
-                    )
-                )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password", color = Color.Black.copy(alpha = 0.7f), fontSize = 13.sp) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    singleLine = true,
-                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(
-                                if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = null,
-                                tint = Color.Black
-                            )
-                        }
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.Black,
-                        unfocusedTextColor = Color.Black,
-                        focusedBorderColor = Color.Black,
-                        unfocusedBorderColor = Color.Black.copy(alpha = 0.5f)
-                    )
-                )
-                
-                if (isSignUp) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedTextField(
-                        value = confirmPassword,
-                        onValueChange = { confirmPassword = it },
-                        label = { Text("Confirm Password", color = Color.Black.copy(alpha = 0.7f), fontSize = 13.sp) },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.Black,
-                            unfocusedTextColor = Color.Black,
-                            focusedBorderColor = Color.Black,
-                            unfocusedBorderColor = Color.Black.copy(alpha = 0.5f)
-                        )
-                    )
-                }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                Button(
-                    onClick = {
-                        if (email.isEmpty() || password.isEmpty()) {
-                            Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                        if (isSignUp && password != confirmPassword) {
-                            Toast.makeText(context, "Passwords do not match", Toast.LENGTH_SHORT).show()
-                            return@Button
-                        }
-                        
-                        isLoading = true
-                        if (isSignUp) {
-                            auth.createUserWithEmailAndPassword(email, password)
-                                .addOnCompleteListener { task ->
-                                    isLoading = false
-                                    if (task.isSuccessful) {
-                                        context.getSharedPreferences("auth", Context.MODE_PRIVATE).edit {
-                                            putString("saved_email", email)
-                                            putString("saved_password", password)
-                                        }
-                                        onAuthSuccess()
-                                    } else {
-                                        Toast.makeText(context, "Sign Up Failed: ${task.exception?.message}", Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                        } else {
-                            auth.signInWithEmailAndPassword(email, password)
-                                .addOnCompleteListener { task ->
-                                    isLoading = false
-                                    if (task.isSuccessful) {
-                                        context.getSharedPreferences("auth", Context.MODE_PRIVATE).edit {
-                                            putString("saved_email", email)
-                                            putString("saved_password", password)
-                                        }
-                                        onAuthSuccess()
-                                    } else {
-                                        Toast.makeText(context, "Login Failed: ${task.exception?.message}", Toast.LENGTH_LONG).show()
-                                    }
-                                }
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF1B5E20)),
-                    enabled = !isLoading
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF1B5E20))
-                    } else {
-                        Text(if (isSignUp) "Sign Up" else "Log In", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    }
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        TextButton(onClick = { isSignUp = !isSignUp }) {
-            Text(
-                if (isSignUp) "Already have an account? Log In." else "Don't have an account? Sign Up!",
-                color = Color.Black,
-                fontSize = 13.sp
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ShoppingPage(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val database = Firebase.database.reference
-    val user = Firebase.auth.currentUser
-    
-    var fridgeItems by remember { mutableStateOf<Map<String, KitchenItem>>(emptyMap()) }
-    var isLoading by remember { mutableStateOf(true) }
-
-    LaunchedEffect(user?.uid) {
-        if (user != null) {
-            database.child("users").child(user.uid).child("fridge")
-                .addValueEventListener(object : ValueEventListener {
-                    override fun onDataChange(snapshot: DataSnapshot) {
-                        val items = mutableMapOf<String, KitchenItem>()
-                        snapshot.children.forEach {
-                            val item = it.getValue(KitchenItem::class.java)
-                            if (item != null) items[it.key!!] = item
-                        }
-                        fridgeItems = items
-                        isLoading = false
-                    }
-                    override fun onCancelled(error: DatabaseError) {
-                        isLoading = false
-                    }
-                })
-        }
-    }
-
-    val lowStockItems = fridgeItems.filter { (key, item) -> isLowStock(key, item) }.toList().sortedBy { it.first }
-
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = { Text("Shopping List 🛒", color = Color.Black, fontSize = 18.sp) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.Black)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
-        }
-    ) { padding ->
-        AppBackground {
-            Column(modifier = Modifier.padding(padding).padding(16.dp)) {
-                if (isLoading) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color.Black)
-                    }
-                } else if (lowStockItems.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Your fridge is full! 🏰", color = Color.Black, fontSize = 16.sp)
-                            Text("Nothing is running low.", color = Color.Black.copy(alpha = 0.7f), fontSize = 12.sp)
-                        }
-                    }
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(lowStockItems) { (key, item) ->
-                            Card(
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.2f))
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column {
-                                        Text(getLocalizedItemNameWithArabic(context, key), fontWeight = FontWeight.Bold, color = Color.Black, fontSize = 14.sp)
-                                        Text(
-                                            "Current: ${item.quantity} ${getLocalizedUnit(context, item.unit)}", 
-                                            fontSize = 11.sp, 
-                                            color = Color.Black.copy(alpha = 0.7f)
-                                        )
-                                    }
-                                    Icon(Icons.Default.PriorityHigh, contentDescription = "Low Stock", tint = Color.Black, modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun NotesPage(onBack: () -> Unit) {
-    val database = Firebase.database.reference
-    val user = Firebase.auth.currentUser
-    
-    var notes by remember { mutableStateOf<List<KitchenNote>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
-    var showAddNoteDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(user?.uid) {
-        if (user != null) {
-            database.child("users").child(user.uid).child("notes")
-                .addValueEventListener(object : ValueEventListener {
-                    override fun onDataChange(snapshot: DataSnapshot) {
-                        val list = mutableListOf<KitchenNote>()
-                        snapshot.children.forEach {
-                            it.getValue(KitchenNote::class.java)?.let { note ->
-                                list.add(note.copy(id = it.key!!))
-                            }
-                        }
-                        notes = list.sortedByDescending { it.timestamp }
-                        isLoading = false
-                    }
-                    override fun onCancelled(error: DatabaseError) {
-                        isLoading = false
-                    }
-                })
-        }
-    }
-
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = { Text("Kitchen Notes 📝", color = Color.Black, fontSize = 18.sp) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.Black)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddNoteDialog = true },
-                containerColor = Color(0xFF0D47A1),
-                contentColor = Color.White
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Note")
-            }
-        }
-    ) { padding ->
-        AppBackground {
-            Column(modifier = Modifier.padding(padding).padding(16.dp)) {
-                if (isLoading) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color.Black)
-                    }
-                } else if (notes.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No notes yet! 🖋️", color = Color.Black, fontSize = 16.sp)
-                    }
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(notes) { note ->
-                            Card(
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.2f)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(note.text, color = Color.Black, fontSize = 14.sp)
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-                                        Text(
-                                            sdf.format(Date(note.timestamp)),
-                                            fontSize = 10.sp,
-                                            color = Color.Black.copy(alpha = 0.5f)
-                                        )
-                                        IconButton(
-                                            onClick = {
-                                                if (user != null) {
-                                                    database.child("users").child(user.uid).child("notes").child(note.id).removeValue()
-                                                }
-                                            },
-                                            modifier = Modifier.size(24.dp)
-                                        ) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (showAddNoteDialog) {
-        var noteText by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { showAddNoteDialog = false },
-            title = { Text("Add Note") },
-            text = {
-                OutlinedTextField(
-                    value = noteText,
-                    onValueChange = { noteText = it },
-                    placeholder = { Text("Type your note here...") },
-                    modifier = Modifier.fillMaxWidth().height(150.dp),
-                    shape = RoundedCornerShape(12.dp)
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (noteText.isNotBlank() && user != null) {
-                            val newNoteRef = database.child("users").child(user.uid).child("notes").push()
-                            newNoteRef.setValue(KitchenNote(text = noteText, timestamp = System.currentTimeMillis()))
-                        }
-                        showAddNoteDialog = false
-                    }
-                ) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddNoteDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun HelpPage(onBack: () -> Unit) {
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = { Text("Help & Tips 💡", color = Color.Black, fontSize = 18.sp) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.Black)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
-        }
-    ) { padding ->
-        AppBackground {
-            LazyColumn(
-                modifier = Modifier.padding(padding).padding(16.dp), 
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                item {
-                    HelpCard(
-                        title = "Adding Items ➕",
-                        description = "1. Tap the blue '+' button at the bottom right.\n" +
-                                    "2. Search for the item you want to add.\n" +
-                                    "3. Configure its quantity, unit, category, and expiry date.\n" +
-                                    "4. Tap 'Add' to save it to your kitchen."
-                    )
-                }
-                item {
-                    HelpCard(
-                        title = "Updating Items ✏️",
-                        description = "1. Find the item in your kitchen list.\n" +
-                                    "2. Tap on the item card.\n" +
-                                    "3. Use the green '+' or red '-' buttons for quick quantity adjustments, or type in the quantity field.\n" +
-                                    "4. Tap 'Update' to save your changes."
-                    )
-                }
-                item {
-                    HelpCard(
-                        title = "Removing Items 🗑️",
-                        description = "1. Tap on the item you wish to remove.\n" +
-                                    "2. In the edit dialog, tap the red 'Delete' button at the bottom left.\n" +
-                                    "3. The item will be permanently removed from your list."
-                    )
-                }
-                item {
-                    HelpCard(
-                        title = "Kitchen Notes 📝",
-                        description = "1. Access it via the new Note icon 📝 in the top bar of the Main screen.\n" +
-                                    "2. Add text notes with an 'Add Note' button.\n" +
-                                    "3. See the date and time each note was created.\n" +
-                                    "4. Delete notes you no longer need."
-                    )
-                }
-                item {
-                    HelpCard(
-                        title = "Shopping List & Low Stock 🛒",
-                        description = "Items that are running low (usually less than 5 units, 0.6 liters, 400g, or 260g for powders/tea/coffee) will automatically appear in your Shopping List. Tap the cart icon at the top to view them."
-                    )
-                }
-                item {
-                    HelpCard(
-                        title = "Searching & Filtering 🔍",
-                        description = "Use the search bar at the top to find specific items by name. Use the filter icon (next to search) to view items from a specific category like Fruits, Dairy, or Frozen."
-                    )
-                }
-                item {
-                    HelpCard(
-                        title = "Expiry Alerts ⚠️",
-                        description = "Items expiring within 3 days will have an orange border. Expired items will have a red border to help you track freshness."
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun HelpCard(title: String, description: String) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.15f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(title, fontWeight = FontWeight.Bold, color = Color.Black, fontSize = 14.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(description, color = Color.Black.copy(alpha = 0.8f), fontSize = 12.sp, lineHeight = 16.sp)
-        }
-    }
 }

@@ -33,8 +33,8 @@ class ReminderReceiver : BroadcastReceiver() {
 
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("Kitchen Tracker Reminder 🍳")
-            .setContentText("Did you buy or eat something? Don't forget to update your kitchen tracker!")
+            .setContentTitle("Kitcheneering Reminder 🍳")
+            .setContentText("Did you buy or eat something? Don't forget to update your kitchen!")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

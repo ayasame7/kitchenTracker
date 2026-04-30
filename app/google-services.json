@@ -13,7 +13,28 @@
           "package_name": "com.sameh.kitchentracker"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "133437212673-2comh3fptsslne3no7i2ppajdk77lq1k.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.sameh.kitchentracker",
+            "certificate_hash": "4174903f8a2c1d6e7086e04f9f80541103550c0e"
+          }
+        },
+        {
+          "client_id": "133437212673-ersjcj2pnnpls83g7lqcau6b14ljctsc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.sameh.kitchentracker",
+            "certificate_hash": "d7894a46c16045742cee478db51b817b9f608acb"
+          }
+        },
+        {
+          "client_id": "133437212673-n8smufuenlk5ukptr5g1lk9vejebjccp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyDrELu4FkGiGimuo_kv98wb3KoahBY5bAY"
@@ -21,7 +42,12 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "133437212673-n8smufuenlk5ukptr5g1lk9vejebjccp.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

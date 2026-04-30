@@ -34,6 +34,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -53,6 +54,8 @@ dependencies {
     implementation("com.google.firebase:firebase-analytics")
     implementation(libs.firebase.database)
     implementation(libs.firebase.auth)
+    implementation(libs.firebase.appcheck.debug)
+    implementation(libs.firebase.appcheck.playintegrity)
     implementation(libs.play.services.auth)
 
     testImplementation(libs.junit)
