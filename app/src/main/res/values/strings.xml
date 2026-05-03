@@ -73,15 +73,15 @@
     <string name="msg_browse_pantry">Browse Pantry 🍎</string>
 
     <!-- Categories -->
-    <string name="cat_fruits">Fruits</string>
-    <string name="cat_vegetables">Vegetables</string>
-    <string name="cat_dairy">Dairy</string>
-    <string name="cat_meat">Meat</string>
-    <string name="cat_chicken">Chicken</string>
-    <string name="cat_bakery">Bakery</string>
-    <string name="cat_frozen">Frozen</string>
-    <string name="cat_pantry">Pantry</string>
-    <string name="cat_cleaners">Cleaners</string>
+    <string name="cat_fruits">Fruits (فواكه)</string>
+    <string name="cat_vegetables">Vegetables (خضروات)</string>
+    <string name="cat_dairy">Dairy (ألبان)</string>
+    <string name="cat_meat">Meat (لحوم)</string>
+    <string name="cat_chicken">Chicken (دجاج)</string>
+    <string name="cat_bakery">Bakery (مخبوزات)</string>
+    <string name="cat_frozen">Frozen (مجمدات)</string>
+    <string name="cat_pantry">Pantry (خزانة)</string>
+    <string name="cat_cleaners">Cleaners (منظفات)</string>
     <string name="cat_spices">Spices (توابل)</string>
 
     <!-- Units -->
