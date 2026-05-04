@@ -1,7 +1,10 @@
 package com.example.fridgetracker
 
+import android.app.AlarmManager
 import android.app.DatePickerDialog
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.media.MediaPlayer
 import android.os.Bundle
@@ -268,6 +271,19 @@ fun getCategoryIcon(category: String): String {
         "spices" -> "🧂"
         "pantry" -> "🥫"
         else -> "📦"
+    }
+}
+
+// Firebase connection checker
+fun checkFirebaseConnection(context: Context): Boolean {
+    return try {
+        val runtime = Runtime.getRuntime()
+        val process = runtime.exec(arrayOf("/system/bin/ping", "-c", "1", "8.8.8.8"))
+        val exitCode = process.waitFor()
+        exitCode == 0
+    } catch (e: Exception) {
+        Log.w("NetworkCheck", "Could not verify internet", e)
+        true // Assume online if we can't check
     }
 }
 
@@ -570,12 +586,64 @@ class MainActivity : ComponentActivity() {
     private val auth = FirebaseAuth.getInstance()
     private var mediaPlayer: MediaPlayer? = null
 
+    companion object {
+        fun scheduleReminders(context: Context) {
+            val alarmManager = context.getSystemService(ALARM_SERVICE) as AlarmManager
+
+            val intent = Intent(context, ReminderReceiver::class.java)
+
+            val pendingIntent1 = PendingIntent.getBroadcast(context, 1, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val pendingIntent2 = PendingIntent.getBroadcast(context, 2, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+            // Cancel existing
+            alarmManager.cancel(pendingIntent1)
+            alarmManager.cancel(pendingIntent2)
+
+            // Set for 9 AM
+            val calendar1 = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 9)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                if (timeInMillis <= System.currentTimeMillis()) {
+                    add(Calendar.DAY_OF_MONTH, 1)
+                }
+            }
+
+            alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, calendar1.timeInMillis, AlarmManager.INTERVAL_DAY, pendingIntent1)
+
+            // Set for 6 PM
+            val calendar2 = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 18)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                if (timeInMillis <= System.currentTimeMillis()) {
+                    add(Calendar.DAY_OF_MONTH, 1)
+                }
+            }
+
+            alarmManager.setRepeating(AlarmManager.RTC_WAKEUP, calendar2.timeInMillis, AlarmManager.INTERVAL_DAY, pendingIntent2)
+
+            Log.d("Reminder", "Twice-daily reminders scheduled at 9 AM and 6 PM")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
         FirebaseApp.initializeApp(this)
-        val firebaseAppCheck = FirebaseAppCheck.getInstance()
-        firebaseAppCheck.installAppCheckProviderFactory(DebugAppCheckProviderFactory.getInstance())
+        // App Check disabled for development - causing invalid token errors
+        // Re-enable in production with proper configuration:
+        // val firebaseAppCheck = FirebaseAppCheck.getInstance()
+        // firebaseAppCheck.installAppCheckProviderFactory(DebugAppCheckProviderFactory.getInstance())
+
+        // Enable Firebase Database persistence
+        try {
+            FirebaseDatabase.getInstance().setPersistenceEnabled(true)
+            FirebaseDatabase.getInstance().reference.keepSynced(true)
+            Log.d("Firebase", "Persistence enabled successfully")
+        } catch (e: Exception) {
+            Log.e("Firebase", "Could not enable persistence", e)
+        }
 
         setContent {
             val context = LocalContext.current
@@ -808,6 +876,12 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 @Composable
 fun MainAppScreen(userId: String, onLogout: () -> Unit) {
     var selectedTab by remember { mutableIntStateOf(0) }
+
+    val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        MainActivity.scheduleReminders(context)
+    }
 
     Scaffold(
         bottomBar = {
@@ -1084,7 +1158,9 @@ fun KitchenNotesScreen(userId: String) {
     var notes by remember { mutableStateOf<List<KitchenNote>>(emptyList()) }
     var showAddNoteDialog by remember { mutableStateOf(false) }
     var noteText by remember { mutableStateOf("") }
-    val database = FirebaseDatabase.getInstance().reference.child("users").child(userId).child("notes")
+    var isSavingNote by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val database = remember(userId) { FirebaseDatabase.getInstance().reference.child("users").child(userId).child("notes") }
 
     LaunchedEffect(userId) {
         database.addValueEventListener(object : ValueEventListener {
@@ -1126,24 +1202,99 @@ fun KitchenNotesScreen(userId: String) {
     }
 
     if (showAddNoteDialog) {
+        LaunchedEffect(isSavingNote) {
+            if (isSavingNote) {
+                delay(15000) // 15 second timeout instead of 30
+                if (isSavingNote) {
+                    Log.w("NoteSave", "Save operation timeout after 15 seconds - Firebase not responding")
+                    isSavingNote = false
+                    android.widget.Toast.makeText(
+                        context,
+                        "⏱️ Save timeout (15s)\n\n🔧 Fix:\n" +
+                        "1. Check internet\n" +
+                        "2. Go to Firebase Console\n" +
+                        "3. Realtime Database → Rules\n" +
+                        "4. Replace with default rules\n" +
+                        "5. Click Publish\n" +
+                        "6. Try again",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
         AlertDialog(
             onDismissRequest = { showAddNoteDialog = false; noteText = "" },
             title = { Text("Add New Note", fontWeight = FontWeight.Bold, color = Color(0xFF1B5E20)) },
             text = { OutlinedTextField(value = noteText, onValueChange = { noteText = it }, placeholder = { Text("Enter your note...") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) },
             confirmButton = {
-                Button(onClick = {
-                    if (noteText.isNotBlank()) {
-                        val ref = database.push()
-                        ref.setValue(KitchenNote(id = ref.key ?: "", text = noteText))
-                            .addOnSuccessListener {
-                                noteText = ""; showAddNoteDialog = false
-                                android.widget.Toast.makeText(context, "Note added", android.widget.Toast.LENGTH_SHORT).show()
+                Button(
+                    onClick = {
+                        if (noteText.isNotBlank() && !isSavingNote) {
+                            isSavingNote = true
+                            Log.d("NoteSave", "🔵 Starting to save note: ${noteText.take(50)}...")
+
+                            // Check authentication
+                            val currentUser = FirebaseAuth.getInstance().currentUser
+                            Log.d("NoteSave", "👤 Current user: ${currentUser?.uid ?: "NOT AUTHENTICATED"}")
+
+                            if (currentUser == null) {
+                                Log.e("NoteSave", "❌ User not authenticated!")
+                                isSavingNote = false
+                                android.widget.Toast.makeText(context, "❌ Not logged in!\n\nPlease log out and log back in.", android.widget.Toast.LENGTH_LONG).show()
+                                return@Button
                             }
-                            .addOnFailureListener { e ->
-                                android.widget.Toast.makeText(context, "Error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
-                            }
+
+                            Log.d("NoteSave", "🔐 Auth OK - User UID: ${currentUser.uid}")
+                            Log.d("NoteSave", "📡 Attempting Firebase write...")
+
+                            val ref = database.push()
+                            Log.d("NoteSave", "🔑 Database reference created: ${ref.key}")
+
+                            ref.setValue(KitchenNote(id = ref.key ?: "", text = noteText))
+                                .addOnSuccessListener {
+                                    Log.d("NoteSave", "✅ SUCCESS - Note saved!")
+                                    noteText = ""
+                                    showAddNoteDialog = false
+                                    isSavingNote = false
+                                    android.widget.Toast.makeText(context, "✅ Note added", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                                .addOnFailureListener { e ->
+                                    Log.e("NoteSave", "❌ FAILED - ${e.message}", e)
+                                    isSavingNote = false
+
+                                    val errorMsg = when {
+                                        e.message?.contains("PERMISSION_DENIED") == true -> {
+                                            Log.e("NoteSave", "🔒 PERMISSION_DENIED - Firebase Rules not updated!")
+                                            "🔒 PERMISSION DENIED\n\n" +
+                                            "Firebase Rules NOT updated!\n\n" +
+                                            "📝 Read: FIREBASE_RULES_UPDATE_NOW.md\n" +
+                                            "Then rebuild and try again"
+                                        }
+                                        e.message?.contains("Invalid") == true -> "⚠️ Authentication Error\n\nFix: Log in again"
+                                        e.message?.contains("disconnect") == true -> "🌐 No connection\n\nCheck internet"
+                                        else -> "❌ Error: ${e.message ?: "Unknown"}"
+                                    }
+
+                                    android.widget.Toast.makeText(context, errorMsg, android.widget.Toast.LENGTH_LONG).show()
+                                }
+                        }
+                    },
+                    enabled = !isSavingNote && noteText.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF2E7D32),
+                        disabledContainerColor = Color(0xFF2E7D32).copy(alpha = 0.6f)
+                    )
+                ) {
+                    if (isSavingNote) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Save")
                     }
-                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))) { Text("Save") }
+                }
             },
             dismissButton = { TextButton(onClick = { showAddNoteDialog = false; noteText = "" }) { Text("Cancel", color = Color.Gray) } }
         )
@@ -1175,7 +1326,7 @@ fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> U
 
     var customItemName by remember { mutableStateOf("") }
     var quantityStr by remember { mutableStateOf("1") }
-    var minQuantityStr by remember { mutableStateOf("1") }
+    // Removed minQuantityStr state, as 'Min' field is no longer needed
     var unit by remember { mutableStateOf("pcs") }
     var category by remember { mutableStateOf("pantry") }
     var expiryDate by remember { mutableStateOf<Long?>(null) }
@@ -1198,7 +1349,7 @@ fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> U
                             IconButton(onClick = { val current = quantityStr.toDoubleOrNull() ?: 0.0; quantityStr = (current - 1.0).coerceAtLeast(0.0).toString() }, modifier = Modifier.size(36.dp).background(Color(0xFFB71C1C), RoundedCornerShape(8.dp))) { Icon(Icons.Default.Remove, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
                             IconButton(onClick = { val current = quantityStr.toDoubleOrNull() ?: 0.0; quantityStr = (current + 1.0).toString() }, modifier = Modifier.size(36.dp).background(Color(0xFF003300), RoundedCornerShape(8.dp))) { Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
                         }
-                        OutlinedTextField(value = minQuantityStr, onValueChange = { minQuantityStr = it }, label = { Text("Min") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(12.dp))
+                        // Removed 'Min' field
                     }
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -1242,7 +1393,7 @@ fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> U
             confirmButton = {
                 Button(onClick = {
                     val key = if (isCustomItemMode) customItemName.lowercase().replace(" ", "_") else selectedPredefined!!.key
-                    onItemAdded(key, KitchenItem(quantityStr.toDoubleOrNull() ?: 1.0, minQuantityStr.toDoubleOrNull() ?: 1.0, unit, category, expiryDate))
+                    onItemAdded(key, KitchenItem(quantityStr.toDoubleOrNull() ?: 1.0, 1.0, unit, category, expiryDate)) // Always use 1.0 as minQuantity
                     isCustomItemMode = false; selectedPredefined = null
                 }) { Text("Add") }
             },
@@ -1344,8 +1495,7 @@ fun EditItemDialog(itemKey: String, item: KitchenItem, onDismiss: () -> Unit, on
                         DatePickerDialog(context, { _, y, m, d ->
                             val newDate = Calendar.getInstance()
                             newDate.set(y, m, d)
-                            expiryDate = newDate.timeInMillis
-                        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+                            expiryDate = newDate.timeInMillis                        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
                     }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Gray.copy(alpha = 0.1f))
                 ) {
                     val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
@@ -1525,5 +1675,4 @@ fun ShoppingListScreen(userId: String) {
         }
     }
 }
-
 
