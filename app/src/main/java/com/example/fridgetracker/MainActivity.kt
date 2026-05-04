@@ -672,18 +672,18 @@ class MainActivity : ComponentActivity() {
 
             val features1 = listOf(
                 "Secure cloud-synced inventory 🔒",
-                "Real-time interface & instant tracking 📊",
+                "Real-time Tracking 📊",
                 "100+ essentials across 11 categories 📦",
                 "Color-coded expiry warnings ⚠️",
                 "Smart low-stock alerts & lists 🛒"
             )
 
             val features2 = listOf(
-                " Bilingual interface (English + Arabic) 🌍",
-                " Editable recipe & reminder notepad 📝",
+                " English and Arabic interface 🌍",
+                " Interactive onboarding 📖",
+                " Recipe Reminder Notes 📝",
                 " Twice‑daily inventory reminders 🔔",
-                " Step‑by‑step feature guide 💡",
-                " Interactive onboarding 📖"
+                " Step‑by‑step feature guide 💡"
             )
 
             when (introStep) {
@@ -946,7 +946,6 @@ fun InventoryScreen(userId: String, onLogout: () -> Unit) {
     val database = remember(userId) { FirebaseDatabase.getInstance().reference.child("users").child(userId).child("inventory") }
 
     LaunchedEffect(userId) {
-        android.widget.Toast.makeText(context, "Connecting to: $userId", android.widget.Toast.LENGTH_SHORT).show()
         database.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val newItems = mutableMapOf<String, KitchenItem>()
@@ -985,7 +984,7 @@ fun InventoryScreen(userId: String, onLogout: () -> Unit) {
             Column(modifier = Modifier.background(Color(0xFF2E7D32)).padding(bottom = 12.dp)) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Kitcheneering 🍳 (${items.size})", 
+                        text = "Kitcheneering \uD83C\uDF73", // Removed item count per user request
                         fontSize = 20.sp, 
                         fontWeight = FontWeight.Bold, 
                         color = Color.White, 
@@ -1607,7 +1606,6 @@ fun ShoppingListScreen(userId: String) {
     val database = remember(userId) { FirebaseDatabase.getInstance().reference.child("users").child(userId).child("inventory") }
 
     LaunchedEffect(userId) {
-        android.widget.Toast.makeText(context, "Connecting to: $userId", android.widget.Toast.LENGTH_SHORT).show()
         database.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val newItems = mutableMapOf<String, KitchenItem>()
