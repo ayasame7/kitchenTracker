@@ -7,10 +7,19 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        Log.d("ReminderReceiver", "Received intent: ${intent.action}")
+        
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            Log.d("ReminderReceiver", "Re-scheduling reminders after boot")
+            MainActivity.scheduleReminders(context)
+            return
+        }
+
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "reminder_channel"
 
@@ -40,6 +49,7 @@ class ReminderReceiver : BroadcastReceiver() {
             .setAutoCancel(true)
             .build()
 
+        Log.d("ReminderReceiver", "Showing notification")
         notificationManager.notify(System.currentTimeMillis().toInt(), notification)
     }
 }

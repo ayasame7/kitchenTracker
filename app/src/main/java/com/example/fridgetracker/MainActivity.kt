@@ -1,17 +1,23 @@
 package com.example.fridgetracker
 
+import android.Manifest
 import android.app.AlarmManager
 import android.app.DatePickerDialog
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.MediaPlayer
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -29,6 +35,7 @@ import androidx.compose.material.icons.filled.Note
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -234,14 +241,16 @@ fun getEnglishItemName(key: String): String {
     return key.replace("_", " ").replaceFirstChar { it.uppercase() }
 }
 
-fun getLocalizedItemNameWithArabic(context: Context, key: String): String {
+fun getLocalizedItemNameWithArabic(context: Context, key: String, arabicContext: Context? = null): String {
     val englishName = getEnglishItemName(key)
     val predefined = commonKitchenItems.find { it.key == key }
     if (predefined != null && predefined.nameRes != -1) {
-        val configuration = Configuration(context.resources.configuration)
-        configuration.setLocale(Locale.forLanguageTag("ar"))
-        val arabicContext = context.createConfigurationContext(configuration)
-        val arabicName = try { arabicContext.getString(predefined.nameRes) } catch (_: Exception) { "" }
+        val effectiveArabicContext = arabicContext ?: run {
+            val configuration = Configuration(context.resources.configuration)
+            configuration.setLocale(Locale.forLanguageTag("ar"))
+            context.createConfigurationContext(configuration)
+        }
+        val arabicName = try { effectiveArabicContext.getString(predefined.nameRes) } catch (_: Exception) { "" }
         return if (arabicName.isNotEmpty()) "$englishName ($arabicName)" else englishName
     }
     return englishName
@@ -647,6 +656,31 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val context = LocalContext.current
+            
+            // Request notification permission for Android 13+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val launcher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { isGranted ->
+                    if (isGranted) {
+                        Log.d("Permission", "Notification permission granted")
+                        MainActivity.scheduleReminders(context)
+                    } else {
+                        Log.w("Permission", "Notification permission denied")
+                    }
+                }
+                
+                LaunchedEffect(Unit) {
+                    if (ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
+
             var introStep by remember { mutableIntStateOf(0) }
             var user by remember { mutableStateOf(auth.currentUser) }
             
@@ -876,11 +910,29 @@ fun AuthScreen(onAuthSuccess: () -> Unit) {
 @Composable
 fun MainAppScreen(userId: String, onLogout: () -> Unit) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var selectedCategory by rememberSaveable { mutableStateOf("All") }
+    var inventoryItems by remember { mutableStateOf<Map<String, KitchenItem>>(emptyMap()) }
 
     val context = LocalContext.current
+    val database = remember(userId) { FirebaseDatabase.getInstance().reference.child("users").child(userId).child("inventory") }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(userId) {
         MainActivity.scheduleReminders(context)
+        
+        database.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val newItems = mutableMapOf<String, KitchenItem>()
+                snapshot.children.forEach { child ->
+                    try {
+                        val item = child.getValue(KitchenItem::class.java)
+                        if (item != null) newItems[child.key!!] = item
+                    } catch (e: Exception) { Log.e("Firebase", "Error parsing ${child.key}: ${e.message}") }
+                }
+                inventoryItems = newItems
+            }
+            override fun onCancelled(error: DatabaseError) { Log.e("Firebase", "Error: ${error.message}") }
+        })
     }
 
     Scaffold(
@@ -924,58 +976,56 @@ fun MainAppScreen(userId: String, onLogout: () -> Unit) {
     ) { padding ->
         Box(modifier = Modifier.padding(padding)) {
             when (selectedTab) {
-                0 -> InventoryScreen(userId, onLogout)
+                0 -> InventoryScreen(
+                    userId = userId,
+                    onLogout = onLogout,
+                    items = inventoryItems,
+                    searchQuery = searchQuery,
+                    onSearchQueryChange = { searchQuery = it },
+                    selectedCategory = selectedCategory,
+                    onSelectedCategoryChange = { selectedCategory = it }
+                )
                 1 -> KitchenNotesScreen(userId)
                 2 -> HelpScreen()
-                3 -> ShoppingListScreen(userId)
+                3 -> ShoppingListScreen(userId, inventoryItems)
             }
         }
     }
 }
 
 @Composable
-fun InventoryScreen(userId: String, onLogout: () -> Unit) {
-    var items by remember { mutableStateOf<Map<String, KitchenItem>>(emptyMap()) }
-    var searchQuery by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("All") }
+fun InventoryScreen(
+    userId: String, 
+    onLogout: () -> Unit,
+    items: Map<String, KitchenItem>,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    selectedCategory: String,
+    onSelectedCategoryChange: (String) -> Unit
+) {
     var showAddDialog by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<Pair<String, KitchenItem>?>(null) }
     var categoryExpanded by remember { mutableStateOf(false) }
     
     val context = LocalContext.current
-    val database = remember(userId) { FirebaseDatabase.getInstance().reference.child("users").child(userId).child("inventory") }
-
-    LaunchedEffect(userId) {
-        database.addValueEventListener(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val newItems = mutableMapOf<String, KitchenItem>()
-                Log.d("Firebase", "onDataChange: ${snapshot.childrenCount} items")
-                snapshot.children.forEach { child ->
-                    try {
-                        val item = child.getValue(KitchenItem::class.java)
-                        if (item != null) {
-                            newItems[child.key!!] = item
-                        }
-                    } catch (e: Exception) {
-                        Log.e("Firebase", "Error parsing ${child.key}: ${e.message}")
-                    }
-                }
-                items = newItems
-            }
-            override fun onCancelled(error: DatabaseError) {
-                Log.e("Firebase", "Error: ${error.message}")
-                android.widget.Toast.makeText(context, "DB Error: ${error.message}", android.widget.Toast.LENGTH_LONG).show()
-            }
-        })
+    val arabicContext = remember(context) {
+        val configuration = Configuration(context.resources.configuration)
+        configuration.setLocale(Locale.forLanguageTag("ar"))
+        context.createConfigurationContext(configuration)
     }
+    val database = remember(userId) { FirebaseDatabase.getInstance().reference.child("users").child(userId).child("inventory") }
 
     val categories = listOf("All", "fruits", "vegetables", "dairy", "meat", "chicken", "bakery", "frozen", "pantry", "cleaners", "spices")
 
-    val filteredItems = remember(items, searchQuery, selectedCategory) {
+    val filteredItems = remember(items, searchQuery, selectedCategory, arabicContext) {
         items.filter { (key, item) ->
-            val matchesSearch = key.contains(searchQuery, ignoreCase = true)
             val matchesCategory = selectedCategory == "All" || item.category.lowercase() == selectedCategory.lowercase()
-            matchesSearch && matchesCategory
+            if (!matchesCategory) return@filter false
+            
+            if (searchQuery.isBlank()) return@filter true
+
+            val localizedName = getLocalizedItemNameWithArabic(context, key, arabicContext)
+            localizedName.contains(searchQuery, ignoreCase = true)
         }.toList()
     }
 
@@ -984,7 +1034,7 @@ fun InventoryScreen(userId: String, onLogout: () -> Unit) {
             Column(modifier = Modifier.background(Color(0xFF2E7D32)).padding(bottom = 12.dp)) {
                 Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Kitcheneering \uD83C\uDF73", // Removed item count per user request
+                        text = "Kitcheneering",
                         fontSize = 20.sp, 
                         fontWeight = FontWeight.Bold, 
                         color = Color.White, 
@@ -1000,7 +1050,7 @@ fun InventoryScreen(userId: String, onLogout: () -> Unit) {
                 ) {
                     OutlinedTextField(
                         value = searchQuery,
-                        onValueChange = { searchQuery = it },
+                        onValueChange = onSearchQueryChange,
                         placeholder = { Text("Search items...", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp) },
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
@@ -1040,7 +1090,7 @@ fun InventoryScreen(userId: String, onLogout: () -> Unit) {
                                 DropdownMenuItem(
                                     text = { Text(getLocalizedCategory(context, cat), fontSize = 14.sp) },
                                     onClick = {
-                                        selectedCategory = cat
+                                        onSelectedCategoryChange(cat)
                                         categoryExpanded = false
                                     }
                                 )
@@ -1080,6 +1130,7 @@ fun InventoryScreen(userId: String, onLogout: () -> Unit) {
                         KitchenItemCard(
                             key = key, 
                             item = item, 
+                            arabicContext = arabicContext,
                             onEdit = { editingItem = key to item }, 
                             onDelete = { database.child(key).removeValue() }
                         )
@@ -1114,7 +1165,7 @@ fun InventoryScreen(userId: String, onLogout: () -> Unit) {
 }
 
 @Composable
-fun KitchenItemCard(key: String, item: KitchenItem, onEdit: () -> Unit, onDelete: () -> Unit) {
+fun KitchenItemCard(key: String, item: KitchenItem, arabicContext: Context? = null, onEdit: () -> Unit, onDelete: () -> Unit) {
     val context = LocalContext.current
     val isExpired = item.expiryDate?.let { it < System.currentTimeMillis() } ?: false
     val isLowStock = isLowStock(item)
@@ -1137,14 +1188,14 @@ fun KitchenItemCard(key: String, item: KitchenItem, onEdit: () -> Unit, onDelete
             }
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(getLocalizedItemNameWithArabic(context, key), fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text("${item.quantity} ${getLocalizedUnit(context, item.unit)}", fontSize = 14.sp, color = Color.DarkGray)
-                Text("Category: ${getLocalizedCategory(context, item.category)}", fontSize = 12.sp, color = Color.Gray)
+                Text(getLocalizedItemNameWithArabic(context, key, arabicContext), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("${item.quantity} ${getLocalizedUnit(context, item.unit)}", fontSize = 11.sp, color = Color.DarkGray)
+                Text("Category: ${getLocalizedCategory(context, item.category)}", fontSize = 11.sp, color = Color.Gray)
 
-                if (isLowStock) Text("Low Stock!", fontSize = 11.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Bold)
+                if (isLowStock) Text("Low Stock!", fontSize = 10.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Bold)
                 item.expiryDate?.let {
                     val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-                    Text("Expires: ${sdf.format(Date(it))}", fontSize = 11.sp, color = if (isExpired) Color.Red else Color.Gray)
+                    Text("Expires: ${sdf.format(Date(it))}", fontSize = 10.sp, color = if (isExpired) Color.Red else Color.Gray)
                 }
             }
             IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Delete", tint = Color.Red.copy(alpha = 0.6f)) }
@@ -1319,6 +1370,11 @@ fun NoteCard(note: KitchenNote, onDelete: () -> Unit) {
 @Composable
 fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> Unit) {
     val context = LocalContext.current
+    val arabicContext = remember(context) {
+        val configuration = Configuration(context.resources.configuration)
+        configuration.setLocale(Locale.forLanguageTag("ar"))
+        context.createConfigurationContext(configuration)
+    }
     var searchQuery by remember { mutableStateOf("") }
     var selectedPredefined by remember { mutableStateOf<PredefinedItem?>(null) }
     var isCustomItemMode by remember { mutableStateOf(false) }
@@ -1331,7 +1387,7 @@ fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> U
     var expiryDate by remember { mutableStateOf<Long?>(null) }
 
     if (selectedPredefined != null || isCustomItemMode) {
-        val itemName = if (isCustomItemMode) customItemName else getLocalizedItemNameWithArabic(context, selectedPredefined!!.key)
+        val itemName = if (isCustomItemMode) customItemName else getLocalizedItemNameWithArabic(context, selectedPredefined!!.key, arabicContext)
         if (selectedPredefined != null && !isCustomItemMode) {
             unit = selectedPredefined!!.unit
             category = selectedPredefined!!.category
@@ -1423,7 +1479,7 @@ fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> U
                     LazyColumn(modifier = Modifier.height(300.dp)) {
                         items(filteredPredefined) { predefined ->
                             ListItem(
-                                headlineContent = { Text(getLocalizedItemNameWithArabic(context, predefined.key), fontWeight = FontWeight.SemiBold, fontSize = 14.sp) },
+                                headlineContent = { Text(getLocalizedItemNameWithArabic(context, predefined.key, arabicContext), fontWeight = FontWeight.SemiBold, fontSize = 14.sp) },
                                 supportingContent = { Text("${getLocalizedCategory(context, predefined.category)} • ${predefined.unit}", fontSize = 12.sp) },
                                 leadingContent = { Text(getCategoryIcon(predefined.category), fontSize = 24.sp) },
                                 modifier = Modifier.clickable { selectedPredefined = predefined }
@@ -1441,8 +1497,12 @@ fun AddItemDialog(onDismiss: () -> Unit, onItemAdded: (String, KitchenItem) -> U
 @Composable
 fun EditItemDialog(itemKey: String, item: KitchenItem, onDismiss: () -> Unit, onItemUpdated: (KitchenItem?) -> Unit) {
     val context = LocalContext.current
+    val arabicContext = remember(context) {
+        val configuration = Configuration(context.resources.configuration)
+        configuration.setLocale(Locale.forLanguageTag("ar"))
+        context.createConfigurationContext(configuration)
+    }
     var quantityStr by remember { mutableStateOf(item.quantity.toString()) }
-    var minQuantityStr by remember { mutableStateOf(item.minQuantity.toString()) }
     var unit by remember { mutableStateOf(item.unit) }
     var category by remember { mutableStateOf(item.category) }
     var expiryDate by remember { mutableStateOf(item.expiryDate) }
@@ -1451,7 +1511,7 @@ fun EditItemDialog(itemKey: String, item: KitchenItem, onDismiss: () -> Unit, on
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Edit ${getLocalizedItemNameWithArabic(context, itemKey)}", fontSize = 15.sp, modifier = Modifier.weight(1f))
+                Text("Edit ${getLocalizedItemNameWithArabic(context, itemKey, arabicContext)}", fontSize = 15.sp, modifier = Modifier.weight(1f))
                 IconButton(onClick = { val current = quantityStr.toDoubleOrNull() ?: 0.0; quantityStr = (current - 1.0).coerceAtLeast(0.0).toString() }, modifier = Modifier.size(32.dp).background(Color(0xFFB71C1C), RoundedCornerShape(8.dp))) { Icon(Icons.Default.Remove, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
                 Spacer(modifier = Modifier.width(8.dp))
                 IconButton(onClick = { val current = quantityStr.toDoubleOrNull() ?: 0.0; quantityStr = (current + 1.0).toString() }, modifier = Modifier.size(32.dp).background(Color(0xFF003300), RoundedCornerShape(8.dp))) { Icon(Icons.Default.Add, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
@@ -1459,10 +1519,14 @@ fun EditItemDialog(itemKey: String, item: KitchenItem, onDismiss: () -> Unit, on
         },
         text = {
             Column {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = quantityStr, onValueChange = { quantityStr = it }, label = { Text("Qty") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(12.dp))
-                    OutlinedTextField(value = minQuantityStr, onValueChange = { minQuantityStr = it }, label = { Text("Min") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(12.dp))
-                }
+                OutlinedTextField(
+                    value = quantityStr,
+                    onValueChange = { quantityStr = it },
+                    label = { Text("Quantity") },
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    shape = RoundedCornerShape(12.dp)
+                )
                 Spacer(modifier = Modifier.height(12.dp))
 
                 var unitExpanded by remember { mutableStateOf(false) }
@@ -1502,7 +1566,7 @@ fun EditItemDialog(itemKey: String, item: KitchenItem, onDismiss: () -> Unit, on
                 }
             }
         },
-        confirmButton = { Button(onClick = { onItemUpdated(item.copy(quantity = quantityStr.toDoubleOrNull() ?: 1.0, minQuantity = minQuantityStr.toDoubleOrNull() ?: 1.0, unit = unit, category = category, expiryDate = expiryDate)) }) { Text("Update") } },
+        confirmButton = { Button(onClick = { onItemUpdated(item.copy(quantity = quantityStr.toDoubleOrNull() ?: 1.0, minQuantity = item.minQuantity, unit = unit, category = category, expiryDate = expiryDate)) }) { Text("Update") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
@@ -1523,26 +1587,25 @@ fun HelpScreen() {
             "Tap Update"
         ),
         "Removing Items 🗑️" to listOf(
-            "Tap item",
-            "In edit dialog → red Delete bottom left",
+            "Tap red Delete bottom on the right next to the item",
             "Item removed permanently"
         ),
         "Kitchen Notes 📝" to listOf(
             "Tap Note icon top bar",
             "Add text via Add Note",
             "Date/time auto‑stamped",
-            "Delete when no longer needed"
+            "Delete if not needed"
         ),
         "Shopping List & Low Stock 🛒" to listOf(
             "Items <2 units, <0.6 L, <400 g auto‑added",
-            "Tap cart icon to view"
+            "Tap cart icon to view",
+            "Orange border = low stock"
         ),
         "Searching & Filtering 🔍" to listOf(
             "Use search bar for names",
-            "Use filter icon for categories (Fruits, Dairy, Frozen, etc.)"
+            "Use filter icon for categories (Fruits, Dairy, Frozen, ..)"
         ),
         "Expiry Alerts ⚠️" to listOf(
-            "Orange border = expiring within 3 days",
             "Red border = expired"
         )
     )
@@ -1568,7 +1631,7 @@ fun HelpScreen() {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
                                 text = title,
-                                fontSize = 18.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF2E7D32),
                                 modifier = Modifier.padding(bottom = 8.dp)
@@ -1576,7 +1639,7 @@ fun HelpScreen() {
                             points.forEach { point ->
                                 Text(
                                     text = "• $point",
-                                    fontSize = 14.sp,
+                                    fontSize = 12.sp,
                                     color = Color.Black,
                                     modifier = Modifier.padding(vertical = 2.dp)
                                 )
@@ -1593,40 +1656,19 @@ fun isLowStock(item: KitchenItem): Boolean {
     return when (item.unit) {
         "l" -> item.quantity < 0.6
         "g" -> item.quantity < 400
+        "kg" -> item.quantity < 0.4
         "plate", "pcs", "packet", "jar", "bag" -> item.quantity < 2
         else -> item.quantity <= item.minQuantity
     }
 }
 
 @Composable
-fun ShoppingListScreen(userId: String) {
-    var items by remember { mutableStateOf<Map<String, KitchenItem>>(emptyMap()) }
-
+fun ShoppingListScreen(userId: String, items: Map<String, KitchenItem>) {
     val context = LocalContext.current
-    val database = remember(userId) { FirebaseDatabase.getInstance().reference.child("users").child(userId).child("inventory") }
-
-    LaunchedEffect(userId) {
-        database.addValueEventListener(object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val newItems = mutableMapOf<String, KitchenItem>()
-                Log.d("Firebase", "onDataChange: ${snapshot.childrenCount} items")
-                snapshot.children.forEach { child ->
-                    try {
-                        val item = child.getValue(KitchenItem::class.java)
-                        if (item != null) {
-                            newItems[child.key!!] = item
-                        }
-                    } catch (e: Exception) {
-                        Log.e("Firebase", "Error parsing ${child.key}: ${e.message}")
-                    }
-                }
-                items = newItems
-            }
-            override fun onCancelled(error: DatabaseError) {
-                Log.e("Firebase", "Error: ${error.message}")
-                android.widget.Toast.makeText(context, "DB Error: ${error.message}", android.widget.Toast.LENGTH_LONG).show()
-            }
-        })
+    val arabicContext = remember(context) {
+        val configuration = Configuration(context.resources.configuration)
+        configuration.setLocale(Locale.forLanguageTag("ar"))
+        context.createConfigurationContext(configuration)
     }
 
     val lowStockItems = remember(items) {
@@ -1664,6 +1706,7 @@ fun ShoppingListScreen(userId: String) {
                         KitchenItemCard(
                             key = key,
                             item = item,
+                            arabicContext = arabicContext,
                             onEdit = { /* No edit in shopping list */ },
                             onDelete = { /* No delete in shopping list */ }
                         )
